@@ -1,0 +1,27 @@
+# CMake build output
+/build/
+/build-*/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/CMakeUserPresets.json
+/madway
+*.o
+*.a
+*.so
+*.so.*
+
+# Local environment files (keep shareable examples)
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+/.vscode/
+/.idea/
+*~
+*.swp
+*.swo
+.DS_Store
