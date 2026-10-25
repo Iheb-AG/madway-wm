@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(madway CXX)
+project(madway C)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(PkgConfig REQUIRED)
 # Target the exact version installed on your system: wlroots-0.20
@@ -10,7 +11,11 @@ pkg_check_modules(WLROOTS REQUIRED wlroots-0.20)
 pkg_check_modules(WAYLAND_SERVER REQUIRED wayland-server)
 pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
 
-add_executable(madway src/main.cpp)
+add_executable(madway
+    src/main.c
+    src/main.h
+)
+target_compile_definitions(madway PRIVATE WLR_USE_UNSTABLE)
 
 target_link_libraries(madway PRIVATE
     ${WLROOTS_LIBRARIES}
