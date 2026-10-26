@@ -2,7 +2,37 @@
 
 ## Unreleased
 
-- Add a configurable 24px multi-output top bar with workspace/title/status and
+- Keep native startup working when persistent logs cannot be written (including
+  ENOSPC): fall back to a private runtime log, then login-manager stdout/stderr.
+  Preserve the last nonempty log and test disk-full and unwritable-path cases.
+
+- Support all four panel edges with live configuration, compact side-panel buttons,
+  correct output reservations, and inward-opening dropdowns.
+- Add a per-window Keep above others toggle (modifier+A), including PiP over
+  fullscreen apps, workspace visibility and pointer hit testing.
+- Add tiled border/modifier resizing with per-output master splits and weighted
+  stack heights; retain tiling, gaps and bounded neighbouring sizes.
+
+- Add a visible modifier+Tab window switcher with reverse cycling, release-to-select
+  and Escape cancellation; directional tile shortcuts; optional focus on hover.
+- Add five shared frame/shell colour profiles and explicit solid-colour backgrounds.
+- Add a validated .madway command language, CLI, and opt-in startup command files.
+
+- Fix the native login entry's quoted executable path, which Plasma Login's
+  session shell treated literally and rejected with exit status 127. Add a
+  matching launcher regression and private rotating native-session logs.
+
+- Add a live audio mixer with device/stream sliders, mute controls, and default
+  input/output selection using pactl (PipeWire Pulse or PulseAudio).
+- Open Applications and utility submenus beside their parent on hover, preserving
+  keyboard navigation, and tighten the centered application/command search UI.
+
+- Tighten shell padding and typography, adopt a black/grayscale palette, and use
+  18px panels, 14px custom title bars, and 1px default tile gaps.
+- Group Apps/Run/Settings under madway and give every panel control its own
+  dropdown: workspaces, window actions, status, audio, clock, and session.
+
+- Add a configurable compact multi-output top bar with workspace/title/status and
   utility controls, plus a shared desktop right-click menu.
 - Add a staged/dry-run-aware CachyOS/Arch installer, native DRM/libinput session
   entry, activation-environment setup, and native VT switching. Hardware session

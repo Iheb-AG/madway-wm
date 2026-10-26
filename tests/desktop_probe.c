@@ -5,6 +5,7 @@
 #include "layer.h"
 #include "workspace.h"
 #include "decoration.h"
+#include "input.h"
 #include <unistd.h>
 #include <assert.h>
 #include <dlfcn.h>
@@ -28,6 +29,11 @@ static int stage, ticks;
 static struct wlr_backend *headless;
 static struct wlr_output *hotplug_output;
 static struct madway_view *previous_view;
+static pid_t previous_menu_pid;
+static struct madway_view *feature_views[3];
+static unsigned feature_origin;
+static unsigned panel_edges_seen;
+static int resize_width, resize_height;
 static void find_headless(struct wlr_backend *backend, void *data)
 {
     (void)data;
@@ -65,6 +71,26 @@ static void key(uint32_t code, enum wl_keyboard_key_state state)
     wlr_keyboard_notify_key(&keyboard, &event);
 }
 
+static void feature_shortcut(uint32_t code) {
+    key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+    key(code,WL_KEYBOARD_KEY_STATE_PRESSED);key(code,WL_KEYBOARD_KEY_STATE_RELEASED);
+    key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+}
+static void feature_focus(struct madway_view *target) {
+    for(int i=0;i<8 && server->focused_view!=target;++i)feature_shortcut(KEY_TAB);
+    assert(server->focused_view==target);
+}
+static void feature_motion(double x,double y) {
+    struct wlr_box bounds;wlr_output_layout_get_box(server->output_layout,NULL,&bounds);
+    struct wlr_pointer_motion_absolute_event motion={.pointer=&pointer,.time_msec=timestamp++,
+        .x=(x-bounds.x)/bounds.width,.y=(y-bounds.y)/bounds.height};
+    wl_signal_emit_mutable(&pointer.events.motion_absolute,&motion);
+}
+static void feature_button(uint32_t button,bool pressed) {
+    struct wlr_pointer_button_event event={.pointer=&pointer,.time_msec=timestamp++,.button=button,
+        .state=pressed?WL_POINTER_BUTTON_STATE_PRESSED:WL_POINTER_BUTTON_STATE_RELEASED};
+    wlr_pointer_notify_button(&pointer,&event);
+}
 static const uint32_t letters[26]={KEY_A,KEY_B,KEY_C,KEY_D,KEY_E,KEY_F,KEY_G,KEY_H,KEY_I,KEY_J,KEY_K,KEY_L,KEY_M,KEY_N,KEY_O,KEY_P,KEY_Q,KEY_R,KEY_S,KEY_T,KEY_U,KEY_V,KEY_W,KEY_X,KEY_Y,KEY_Z};
 static const char *typing=NULL;
 static int typing_index,typing_delay;
@@ -239,6 +265,195 @@ static int run_stage(void *data) {
                 assert(output->usable_area.height==h-22);
             }
             fprintf(stderr,"PANEL HEIGHT RELOAD PASS\n");stage=22;
+        }
+    } else if((stage==22 || stage==23) && getenv("MADWAY_TEST_MENU_READY") != NULL &&
+            access(getenv("MADWAY_TEST_MENU_READY"),F_OK)==0 && server->keyboard_layer!=NULL &&
+            !strcmp(server->keyboard_layer->surface->namespace,"madway-menu")) {
+        pid_t pid;
+        wl_client_get_credentials(wl_resource_get_client(server->keyboard_layer->surface->resource),&pid,NULL,NULL);
+        if(stage==22 || pid!=previous_menu_pid) {
+            previous_menu_pid=pid;
+            key(KEY_ESC,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ESC,WL_KEYBOARD_KEY_STATE_RELEASED);
+            fprintf(stderr,stage==22?"AUDIO DROPDOWN IPC PASS\n":"CLOCK DROPDOWN IPC PASS\n");++stage;
+        }
+    } else if(stage==24 && getenv("MADWAY_TEST_FEATURES_READY") != NULL &&
+            access(getenv("MADWAY_TEST_FEATURES_READY"),F_OK)==0) {
+        previous_view=server->focused_view;
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);stage=25;
+    } else if(stage==25 && server->focused_view!=NULL && server->focused_view!=previous_view) {
+        unsigned count=0;struct madway_view *entry;
+        struct madway_output *output=server->focused_view->output;
+        wl_list_for_each(entry,&server->layout_views,layout_link)
+            if(entry->mapped && !entry->compact_frame && entry->workspace==server->active_workspace && count<3) {
+                entry->floating=false;entry->maximized=false;entry->fullscreen=false;entry->output=output;
+                feature_views[count++]=entry;
+            }
+        wl_list_for_each(entry,&server->layout_views,layout_link)
+            if(entry->compact_frame)wlr_scene_node_set_position(&entry->scene_tree->node,-10000,-10000);
+        assert(count==3);feature_shortcut(KEY_M);feature_shortcut(KEY_M);
+        feature_focus(feature_views[2]);
+        key(KEY_LEFTCTRL,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_LEFTSHIFT,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_LEFT,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_LEFT,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(server->focused_view==feature_views[2]);
+        assert(feature_views[2]->scene_tree->node.x==output->usable_area.x);
+        key(KEY_RIGHT,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_RIGHT,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(feature_views[2]->scene_tree->node.x>output->usable_area.x);
+        int top=feature_views[2]->scene_tree->node.y;
+        key(KEY_DOWN,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_DOWN,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(feature_views[2]->scene_tree->node.y>top);
+        key(KEY_UP,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_UP,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(feature_views[2]->scene_tree->node.y==top);
+        key(KEY_LEFTSHIFT,WL_KEYBOARD_KEY_STATE_RELEASED);key(KEY_LEFTCTRL,WL_KEYBOARD_KEY_STATE_RELEASED);
+        fprintf(stderr,"DIRECTIONAL TILE SHORTCUTS PASS\n");
+        for(unsigned i=0;i<3;++i) {
+            feature_views[i]->floating=true;
+            wlr_scene_node_set_position(&feature_views[i]->scene_tree->node,output->layout_x+20+(int)i*300,output->layout_y+60);
+            wlr_xdg_toplevel_set_size(feature_views[i]->toplevel,240,180);
+            feature_views[i]->frame_visible=false;
+        }
+        feature_focus(feature_views[0]);stage=26;
+    } else if(stage==26 && feature_views[0]->toplevel->base->geometry.width==240 &&
+            feature_views[1]->toplevel->base->geometry.width==240 && feature_views[2]->toplevel->base->geometry.width==240) {
+        assert(server->config.focus_follows_mouse);
+        struct madway_output *output=feature_views[1]->output;
+        struct wlr_box bounds;wlr_output_layout_get_box(server->output_layout,NULL,&bounds);
+        struct wlr_pointer_motion_absolute_event motion={.pointer=&pointer,.time_msec=110,
+            .x=(output->layout_x+370.0-bounds.x)/bounds.width,.y=(output->layout_y+110.0-bounds.y)/bounds.height};
+        wl_signal_emit_mutable(&pointer.events.motion_absolute,&motion);
+        assert(server->focused_view==feature_views[1]);
+        feature_focus(feature_views[0]);
+        assert(server->focused_view==feature_views[0]);
+        server->config.focus_follows_mouse=false;
+        wl_signal_emit_mutable(&pointer.events.motion_absolute,&motion);
+        assert(server->focused_view==feature_views[0]);server->config.focus_follows_mouse=true;
+        fprintf(stderr,"OPTIONAL POINTER FOCUS AND REBASE GUARD PASS\n");
+        feature_origin=server->focused_view->id;
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_TAB,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_TAB,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(server->switcher_active && server->focused_view->id!=feature_origin);stage=27;
+    } else if(stage==27) {
+        bool visible=false;struct madway_layer *layer;
+        wl_list_for_each(layer,&server->layers,link)
+            if(layer->mapped && !strcmp(layer->surface->namespace,"madway-switcher")) {
+                assert(layer->surface->current.keyboard_interactive==ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
+                visible=true;
+            }
+        if(visible) {
+            key(KEY_LEFTSHIFT,WL_KEYBOARD_KEY_STATE_PRESSED);
+            key(KEY_TAB,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_TAB,WL_KEYBOARD_KEY_STATE_RELEASED);
+            key(KEY_LEFTSHIFT,WL_KEYBOARD_KEY_STATE_RELEASED);
+            assert(server->focused_view->id==feature_origin);
+            key(KEY_ESC,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ESC,WL_KEYBOARD_KEY_STATE_RELEASED);
+            assert(!server->switcher_active && server->focused_view->id==feature_origin);
+            key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);stage=28;
+        }
+    } else if(stage==28) {
+        bool visible=false;struct madway_layer *layer;
+        wl_list_for_each(layer,&server->layers,link)
+            if(layer->mapped && !strcmp(layer->surface->namespace,"madway-switcher"))visible=true;
+        if(!visible) {
+            key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+            key(KEY_TAB,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_TAB,WL_KEYBOARD_KEY_STATE_RELEASED);stage=29;
+        }
+    } else if(stage==29) {
+        bool visible=false;struct madway_layer *layer;
+        wl_list_for_each(layer,&server->layers,link)
+            if(layer->mapped && !strcmp(layer->surface->namespace,"madway-switcher"))visible=true;
+        if(visible) {
+            unsigned selected=server->focused_view->id;
+            key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+            assert(!server->switcher_active && server->focused_view->id==selected);
+            fprintf(stderr,"VISIBLE SWITCHER CYCLE CANCEL AND COMMIT PASS\n");stage=30;
+        }
+    } else if(stage==30) {
+        feature_focus(feature_views[0]);feature_shortcut(KEY_A);
+        assert(feature_views[0]->keep_above && feature_views[0]->scene_tree->node.parent==server->above_windows);
+        feature_focus(feature_views[1]);
+        struct madway_output *output=feature_views[0]->output;
+        for(unsigned i=0;i<2;++i)wlr_scene_node_set_position(&feature_views[i]->scene_tree->node,output->layout_x+40,output->layout_y+60);
+        server->config.focus_follows_mouse=false;
+        feature_motion(output->layout_x+100,output->layout_y+110);
+        feature_button(BTN_LEFT,true);feature_button(BTN_LEFT,false);
+        assert(server->focused_view==feature_views[0]);
+        feature_focus(feature_views[1]);feature_shortcut(KEY_F);
+        assert(feature_views[1]->fullscreen && feature_views[0]->scene_tree->node.enabled);
+        feature_motion(output->layout_x+100,output->layout_y+110);
+        feature_button(BTN_LEFT,true);feature_button(BTN_LEFT,false);
+        assert(server->focused_view==feature_views[0] && feature_views[1]->fullscreen);
+        feature_focus(feature_views[2]);
+        assert(!feature_views[1]->fullscreen && feature_views[2]->scene_tree->node.enabled);
+        feature_shortcut(KEY_2);assert(!feature_views[0]->scene_tree->node.enabled);
+        feature_shortcut(KEY_1);feature_focus(feature_views[0]);
+        assert(feature_views[0]->scene_tree->node.enabled && feature_views[0]->keep_above);
+        feature_shortcut(KEY_A);assert(!feature_views[0]->keep_above && feature_views[0]->scene_tree->node.parent==server->windows);
+        fprintf(stderr,"KEEP ABOVE STACKING INPUT FULLSCREEN AND WORKSPACE PASS\n");
+        struct madway_view *entry;unsigned count=0;
+        wl_list_for_each(entry,&server->layout_views,layout_link)
+            if(entry->mapped && !entry->compact_frame && entry->workspace==server->active_workspace) {
+                entry->floating=false;entry->tile_weight=1;entry->frame_visible=false;
+                if(count<3)feature_views[count++]=entry;
+            }
+        assert(count==3);feature_focus(feature_views[0]);feature_shortcut(KEY_M);feature_shortcut(KEY_M);stage=31;
+    } else if(stage==31 && feature_views[0]->toplevel->base->geometry.width+2==feature_views[0]->tile_geometry.width) {
+        struct wlr_box box=feature_views[0]->tile_geometry;
+        resize_width=box.width;
+        feature_motion(box.x+box.width-.5,box.y+box.height/2.0);
+        feature_button(BTN_LEFT,true);
+        assert(server->interactive_mode==MADWAY_TILE_RESIZE);
+        feature_motion(box.x+box.width+59.5,box.y+box.height/2.0);
+        assert(feature_views[0]->tile_geometry.width>resize_width);
+        assert(feature_views[1]->tile_geometry.x==feature_views[0]->tile_geometry.x+feature_views[0]->tile_geometry.width+server->config.tile_gap);
+        feature_button(BTN_LEFT,false);assert(server->interactive_view==NULL);
+        assert(!feature_views[0]->floating && !feature_views[1]->floating);stage=32;
+    } else if(stage==32 && feature_views[1]->toplevel->base->geometry.height+2==feature_views[1]->tile_geometry.height) {
+        struct wlr_box box=feature_views[1]->tile_geometry;
+        resize_width=feature_views[0]->tile_geometry.width;resize_height=box.height;
+        feature_motion(box.x+box.width/2.0,box.y+box.height-.5);
+        feature_button(BTN_LEFT,true);assert(server->interactive_mode==MADWAY_TILE_RESIZE);
+        feature_motion(box.x+box.width/2.0,box.y+box.height+39.5);
+        assert(feature_views[1]->tile_geometry.height>resize_height);
+        assert(feature_views[0]->tile_geometry.width==resize_width);
+        assert(feature_views[2]->tile_geometry.y==feature_views[1]->tile_geometry.y+feature_views[1]->tile_geometry.height+server->config.tile_gap);
+        assert(feature_views[1]->tile_geometry.height+feature_views[2]->tile_geometry.height+server->config.tile_gap==feature_views[1]->output->usable_area.height);
+        feature_button(BTN_LEFT,false);stage=33;
+    } else if(stage==33 && feature_views[1]->toplevel->base->geometry.height+2==feature_views[1]->tile_geometry.height) {
+        struct wlr_box box=feature_views[1]->tile_geometry;
+        feature_motion(box.x+box.width/2.0,box.y+box.height*.75);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);feature_button(BTN_RIGHT,true);
+        assert(server->interactive_mode==MADWAY_TILE_RESIZE);
+        feature_motion(box.x+box.width/2.0+1000,box.y+box.height*.75+1000);
+        assert(feature_views[1]->output->master_percent<=90);
+        assert(feature_views[1]->tile_geometry.height>=32 && feature_views[2]->tile_geometry.height>=32);
+        feature_button(BTN_RIGHT,false);key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(!feature_views[1]->floating && server->interactive_view==NULL);
+        fprintf(stderr,"TILED SHARED EDGE AND MODIFIER RESIZE PASS\n");stage=34;
+    } else if(stage==34) {
+        unsigned count=0, outputs=0;uint32_t anchor=0;int zone=0;
+        struct madway_output *output;struct madway_layer *layer;
+        wl_list_for_each(output,&server->outputs,link)if(output->output->enabled)++outputs;
+        wl_list_for_each(layer,&server->layers,link)
+            if(layer->mapped && !strcmp(layer->surface->namespace,"madway-panel")) {
+                if(count && anchor!=layer->surface->current.anchor){count=0;break;}
+                anchor=layer->surface->current.anchor;zone=layer->surface->current.exclusive_zone;++count;
+            }
+        if(count==outputs && zone>0) {
+            const uint32_t top=ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP,bottom=ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM,
+                left=ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT,right=ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+            unsigned bit=anchor==(top|left|right)?1:anchor==(bottom|left|right)?2:anchor==(left|top|bottom)?4:anchor==(right|top|bottom)?8:0;
+            if(bit && !(panel_edges_seen&bit)) {
+                bool valid=true;
+                wl_list_for_each(output,&server->outputs,link)if(output->output->enabled) {
+                    int w,h;wlr_output_effective_resolution(output->output,&w,&h);
+                    valid=valid && output->usable_area.width==w-((bit==4||bit==8)?zone:0) && output->usable_area.height==h-((bit==1||bit==2)?zone:0)
+                        && output->usable_area.x==output->layout_x+(bit==4?zone:0) && output->usable_area.y==output->layout_y+(bit==1?zone:0);
+                }
+                if(valid) {
+                    panel_edges_seen|=bit;
+                    fprintf(stderr,"PANEL EDGE %s RESERVATION PASS\n",bit==1?"top":bit==2?"bottom":bit==4?"left":"right");
+                }
+            }
         }
     }
     wl_event_source_timer_update(timer,25);return 0;

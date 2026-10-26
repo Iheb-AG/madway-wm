@@ -18,13 +18,13 @@ SHARE = Path(__file__).resolve().parent.parent / "share" / "madway"
 SETTINGS_PAGES = ("Windows", "Displays", "Appearance", "Input", "Notifications", "Audio & brightness", "Session", "Panel")
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "madway" / "settings.ini"
 DEFAULTS = {
-    "appearance": {"title_height": "16", "tile_gap": "2"},
+    "appearance": {"theme": "black", "title_height": "14", "tile_gap": "1"},
     "windows": {"default_mode": "floating", "master_percent": "50"},
-    "input": {"modifier": "alt", "repeat_rate": "25", "repeat_delay": "600"},
-    "panel": {"enabled": "true", "height": "24", "metrics": "true", "clock": "true"},
+    "input": {"focus_follows_mouse": "false", "modifier": "alt", "repeat_rate": "25", "repeat_delay": "600"},
+    "panel": {"position": "top", "enabled": "true", "height": "18", "metrics": "true", "clock": "true"},
     "controls": {"volume_step": "5", "brightness_step": "5"},
-    "wallpaper": {"path": "", "mode": "fill", "color": "#121418"},
-    "notifications": {"enabled": "true", "indicators": "true", "timeout": "5000", "width": "300", "anchor": "top-right"},
+    "wallpaper": {"type": "auto", "path": "", "mode": "fill", "color": "#000000"},
+    "notifications": {"enabled": "true", "indicators": "true", "timeout": "5000", "width": "280", "anchor": "top-right"},
     "sounds": {"enabled": "false", "volume": "0.25", "startup": "", "logout": "", "shutdown": ""},
 }
 
@@ -34,6 +34,53 @@ def settings():
     config.read_dict(DEFAULTS)
     config.read(CONFIG)
     return config
+
+
+def themes():
+    profiles = configparser.ConfigParser(interpolation=None)
+    profiles.read(SHARE / 'themes.ini')
+    return profiles
+
+
+def theme_style(style, config=None):
+    config = config or settings()
+    profiles = themes()
+    name = config.get('appearance', 'theme')
+    if name not in profiles:name = 'black'
+    palette = profiles[name]
+    replacements = dict.fromkeys(('#000000', '#050505'), palette['background'])
+    replacements.update(dict.fromkeys(('#080808', '#101010'), palette['surface']))
+    replacements.update(dict.fromkeys(('#c8c8c8', '#eeeeee', '#ffffff', '#bdbdbd', '#d0d0d0'), palette['text']))
+    replacements.update(dict.fromkeys(('#909090', '#626262'), palette['muted']))
+    replacements.update(dict.fromkeys(('#282828', '#303030', '#555555', '#383838'), palette['border']))
+    replacements.update(dict.fromkeys(('#202020', '#222222'), palette['active']))
+    replacements.update(dict.fromkeys(('#b0b0b0', '#cccccc', '#dddddd', '#888888', '#666666'), palette['accent']))
+    return re.sub(r'#[0-9a-fA-F]{6}', lambda match:replacements.get(match[0].lower(), match[0]), style)
+
+
+def validate_script_updates(updates):
+    choices = {
+        'appearance.theme':set(themes().sections()),
+        'panel.position':{'top','bottom','left','right'},
+        'input.focus_follows_mouse':{'true','false'}, 'input.modifier':{'alt','super'},
+        'windows.default_mode':{'floating','tiled'}, 'wallpaper.type':{'color','image'},
+        'wallpaper.mode':{'fill','fit','center','stretch','tile'},
+    }
+    bounds = {'appearance.title_height':(12,24),'appearance.tile_gap':(0,12),
+              'windows.master_percent':(25,75), 'input.repeat_rate':(1,100),'input.repeat_delay':(100,1500)}
+    if not isinstance(updates, dict) or not updates:raise ValueError('Empty settings command')
+    for field, value in updates.items():
+        if not isinstance(value, str):raise ValueError('Setting values must be text')
+        if field in choices:
+            if value not in choices[field]:raise ValueError('Invalid value for '+field)
+        elif field in bounds:
+            low, high = bounds[field]
+            if not low <= int(value) <= high:raise ValueError(f'{field} must be {low}..{high}')
+        elif field == 'wallpaper.color':
+            if not re.fullmatch(r'#[0-9a-fA-F]{6}', value):raise ValueError('Color must be #RRGGBB')
+        elif field == 'wallpaper.path':
+            if not Path(value).expanduser().is_file():raise ValueError('Wallpaper image does not exist')
+        else:raise ValueError('Unknown setting: '+field)
 
 
 def runtime_directory():
@@ -61,6 +108,50 @@ def volume():
     if not match:
         raise RuntimeError("No default audio output")
     return round(float(match[1]) * 100), "MUTED" in text
+
+
+def audio_snapshot():
+    """PulseAudio JSON API, also provided by PipeWire's pulse server."""
+    info = json.loads(run(["pactl", "--format=json", "info"]))
+    groups = []
+    for kind, title in (("sink", "Outputs"), ("source", "Inputs"),
+                        ("sink-input", "Applications · playback"),
+                        ("source-output", "Applications · recording")):
+        entries = json.loads(run(["pactl", "--format=json", "list", kind+"s"]))
+        rows = []
+        for entry in entries:
+            # Monitor sources capture a device's playback, rather than a microphone.
+            props = entry.get("properties", {})
+            levels = [float(v["value_percent"].rstrip("%")) for v in entry.get("volume", {}).values()]
+            name = entry.get("name", str(entry["index"]))
+            label = entry.get("description") or props.get("application.name") or props.get("media.name") or name
+            if kind in ("sink-input", "source-output") and props.get("media.name"):
+                label += " — " + props["media.name"] if label != props["media.name"] else ""
+            default = info.get("default_sink_name" if kind == "sink" else "default_source_name") == name
+            rows.append(dict(kind=kind, id=int(entry["index"]), name=name, label=label,
+                             volume=round(sum(levels)/len(levels)) if levels else 0,
+                             mute=bool(entry.get("mute", False)), default=default,
+                             adjustable=bool(levels)))
+        groups.append((title, rows))
+    return groups
+
+
+def audio_control(message):
+    kind = message.get("kind")
+    operation = message.get("operation")
+    if kind not in {"sink", "source", "sink-input", "source-output"}:
+        raise RuntimeError("Invalid audio resource")
+    identity = str(int(message["id"]))
+    if int(identity) < 0:raise RuntimeError("Invalid audio resource ID")
+    if operation == "volume":
+        command = ["set-"+kind+"-volume", identity, str(min(100, max(0, int(message["value"]))))+"%"]
+    elif operation == "mute":
+        command = ["set-"+kind+"-mute", identity, "1" if message.get("value") else "0"]
+    elif operation == "default" and kind in {"sink", "source"}:
+        command = ["set-default-"+kind, identity]
+    else:
+        raise RuntimeError("Invalid audio operation")
+    run(["pactl", *command])
 
 
 def backlight():
@@ -212,7 +303,10 @@ class Desktop:
         if mode not in {"fill", "fit", "center", "stretch", "tile"}:
             raise RuntimeError("Unknown wallpaper mode")
         arguments = ["swaybg", "-c", color[1:]]
-        if image:
+        background_type = self.config.get("wallpaper", "type")
+        if background_type not in {"auto", "image", "color"}:raise RuntimeError("Unknown background type")
+        if background_type == "image" and not image:raise RuntimeError("Choose a wallpaper image")
+        if image and background_type != "color":
             path = Path(image).expanduser()
             if not path.is_file():
                 raise RuntimeError("Wallpaper image does not exist")
@@ -229,18 +323,18 @@ class Desktop:
                 raise RuntimeError("Unknown notification position")
             timeout = min(15000, max(1000, self.config.getint("notifications", "timeout")))
             width = min(600, max(200, self.config.getint("notifications", "width")))
-            options = (anchor, timeout, width)
+            options = (anchor, timeout, width, self.config.get("appearance", "theme"))
             if options != self.notification_options:
                 self.terminate("notifications")
                 lines = [line for line in (SHARE / "mako.conf").read_text().splitlines()
                          if line.split("=", 1)[0] not in {"anchor", "width", "default-timeout"}]
-                (self.directory / "mako.conf").write_text("\n".join(lines) +
+                (self.directory / "mako.conf").write_text(theme_style("\n".join(lines), self.config) +
                     f"\nanchor={anchor}\nwidth={width}\ndefault-timeout={timeout}\n")
                 self.notification_options = options
             self.spawn("notifications", ["mako", "--config", str(self.directory / "mako.conf")])
         else:
             self.terminate("notifications")
-        panel_options = tuple(self.config.items("panel"))
+        panel_options = (self.config.get("appearance", "theme"), *self.config.items("panel"))
         if panel_options != self.panel_options:
             self.terminate("panel")
             self.panel_options = panel_options
@@ -259,9 +353,11 @@ class Desktop:
         if existing is not None and existing.poll() is None:
             self.terminate("launcher")
             return
+        style = self.directory / "wofi.css"
+        style.write_text(theme_style((SHARE / "wofi.css").read_text(), self.config))
         self.spawn("launcher", ["wofi", "--show", mode, "--conf", str(SHARE / "wofi.conf"),
-                   "--style", str(SHARE / "wofi.css"), "--term", "kitty", "--prompt",
-                   "Applications" if mode == "drun" else "Run command or script"])
+                   "--style", str(style), "--term", "kitty", "--prompt",
+                   "Search applications…" if mode == "drun" else "Run command…"])
 
     def perform(self, message):
         name = message.get("action")
@@ -270,17 +366,57 @@ class Desktop:
             if len(parts) != 3:
                 raise RuntimeError("Invalid menu position")
             message.update(x=int(parts[1]), y=int(parts[2]));name = "desktop-menu"
-        if name == "desktop-menu":
+        if name in {"desktop-menu", "panel-menu"}:
+            page = message.get("page", "Desktop")
+            if page not in {"Desktop", "Settings", "Window", "Workspaces", "Audio", "Status", "Clock", "Session"}:
+                raise RuntimeError("Unknown panel menu")
             self.terminate("desktop-menu")
+            edge = message.get("edge", "point")
+            if edge not in {"point", "top", "bottom", "left", "right"}:raise ValueError("Unknown panel edge")
             self.spawn("desktop-menu", [sys.executable, str(Path(__file__).with_name("madway-panel")), "menu",
-                "--x", str(int(message.get("x", 0))), "--y", str(int(message.get("y", 0)))])
+                "--x", str(int(message.get("x", 0))), "--y", str(int(message.get("y", 0))),
+                "--edge", edge, "--page", page, "--detail="+str(message.get("detail", ""))[:256]])
+        elif name == "switcher-show":
+            self.spawn("switcher", [sys.executable, str(Path(__file__).with_name("madway-panel")), "switcher"])
+        elif name == "switcher-hide":
+            self.terminate("switcher")
+        elif name == "switcher-select":
+            self.compositor("focus "+str(int(message["id"])))
+            self.terminate("switcher")
+        elif name == "tile":
+            direction = message.get("direction")
+            if direction not in {"left", "right", "up", "down"}:raise RuntimeError("Unknown tile direction")
+            self.compositor("tile "+direction)
+        elif name == "script-config":
+            updates = message.get("updates", {})
+            validate_script_updates(updates)
+            config = settings()
+            for field, value in updates.items():
+                section, key = field.split('.', 1)
+                config[section][key] = str(value)
+            CONFIG.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", dir=CONFIG.parent, delete=False) as temporary:
+                config.write(temporary);temporary_path = Path(temporary.name)
+            temporary_path.replace(CONFIG)
+            self.apply()
+        elif name == "audio-control":
+            audio_control(message)
+        elif name == "launch-app":
+            from gi.repository import Gio
+            app = Gio.DesktopAppInfo.new(str(message["id"]))
+            if app is None or not app.should_show():raise RuntimeError("Application unavailable")
+            app.launch([], None)
         elif name == "close-menu":
             self.terminate("desktop-menu")
+        elif name == "move-workspace":
+            value = int(message['value'])
+            if not 0 <= value < 9:raise ValueError('Invalid workspace')
+            self.compositor(f'move-workspace {value}')
         elif name == "workspace":
             value = int(message["value"])
             if not 0 <= value < 9:raise RuntimeError("Invalid workspace")
             self.compositor(f"workspace {value}")
-        elif name in {"window-floating", "window-maximize", "window-fullscreen", "window-close"}:
+        elif name in {"window-floating", "window-maximize", "window-fullscreen", "window-close", "window-above"}:
             self.compositor(name.removeprefix("window-"))
         elif name == "terminal":
             process = subprocess.Popen(["kitty", "-o", "linux_display_server=wayland"], start_new_session=True)
@@ -385,6 +521,9 @@ class Desktop:
             self.apply()
             self.sound("startup")
             print(f"madway: desktop services ready on {self.socket_path}", flush=True)
+            startup = CONFIG.parent / 'startup.madway'
+            if startup.is_file():
+                self.spawn('startup-script', [sys.executable, str(Path(__file__).with_name('madway-script')), str(startup)])
             self.loop.run()
         finally:
             if not self.shutdown_played:
@@ -394,6 +533,7 @@ class Desktop:
             self.channel.close()
             self.socket_path.unlink(missing_ok=True)
             (self.directory / "mako.conf").unlink(missing_ok=True)
+            (self.directory / "wofi.css").unlink(missing_ok=True)
             for path in self.directory.glob("settings-*.sock"):path.unlink(missing_ok=True)
             try:
                 self.directory.rmdir()
@@ -405,31 +545,33 @@ def settings_window(initial_page="Windows"):
     import gi
     gi.require_version("Gtk", "3.0")
     from gi.repository import Gtk, Gdk, GLib
+    Gtk.Settings.get_default().set_property("gtk-enable-animations", False)
     GLib.set_prgname("org.madway.Settings")
     config = settings()
     window = Gtk.Window(title="madway — Settings")
-    # This owned client requests no CSD; madway supplies its compact 16px frame.
+    # This owned client requests no CSD; madway supplies its compact 14px frame.
     window.set_decorated(False)
-    window.set_default_size(700, 480)
+    window.set_default_size(620, 360)
     window.connect("destroy", Gtk.main_quit)
     provider = Gtk.CssProvider()
-    provider.load_from_data(b"* { font-family: monospace; font-size: 12px; border-radius: 0; } window { background: #121418; color: #d2d6df; } button, entry, spinbutton, combobox { background: #1c1f24; color: #d2d6df; border: 1px solid #3a3f4b; } button:hover { border-color: #d97706; } stacksidebar { background: #1c1f24; } stacksidebar row, stacksidebar row label { color: #d2d6df; } stacksidebar row:hover, stacksidebar row:selected { background: #3a3f4b; } label { color: #d2d6df; padding: 1px; }")
+    settings_css = "* { font-family: monospace; font-size: 11px; border-radius: 0; } window { background: #000000; color: #c8c8c8; } button, entry, spinbutton, combobox { min-height: 16px; padding: 1px 4px; background: #080808; color: #c8c8c8; border: 1px solid #282828; box-shadow: none; } button:hover, button:focus { border-color: #666666; } spinbutton button { min-height: 14px; padding: 0 3px; border: 0; } stacksidebar { background: #080808; } stacksidebar row { min-height: 18px; padding: 2px 4px; } stacksidebar row, stacksidebar row label { color: #bdbdbd; } stacksidebar row:hover, stacksidebar row:selected { background: #222222; } label { color: #c8c8c8; padding: 0; } scale { padding: 2px; } scale trough { min-height: 2px; background: #282828; } scale highlight { background: #888888; }"
+    provider.load_from_data(theme_style(settings_css, config).encode())
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
+    root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=4)
     window.add(root)
-    content = Gtk.Box(spacing=10)
+    content = Gtk.Box(spacing=4)
     root.pack_start(content, True, True, 0)
     stack = Gtk.Stack()
     sidebar = Gtk.StackSidebar()
     sidebar.set_stack(stack)
-    sidebar.set_size_request(124, -1)
+    sidebar.set_size_request(112, -1)
     content.pack_start(sidebar, False, False, 0)
     content.pack_start(stack, True, True, 0)
     status = Gtk.Label(xalign=0, wrap=True)
     root.pack_start(status, False, False, 0)
 
     def category(name):
-        grid = Gtk.Grid(column_spacing=10, row_spacing=10, margin=6)
+        grid = Gtk.Grid(column_spacing=8, row_spacing=5, margin=3)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.add(grid)
@@ -462,7 +604,7 @@ def settings_window(initial_page="Windows"):
         return widget
 
     def file_field(grid, label, value):
-        controls = Gtk.Box(spacing=6)
+        controls = Gtk.Box(spacing=4)
         entry = Gtk.Entry(text=value)
         entry.set_width_chars(18)
         controls.pack_start(entry, True, True, 0)
@@ -491,9 +633,10 @@ def settings_window(initial_page="Windows"):
     default_mode = combo(windows, "New windows", [("floating", "Floating"), ("tiled", "Master / stack tiles")],
                          config.get("windows", "default_mode"))
     default_mode.set_tooltip_text("Applies to new windows; existing windows keep their mode")
-    title = spin(windows, "Title height (px)", "appearance", "title_height", 14, 24)
+    title = spin(windows, "Title height (px)", "appearance", "title_height", 12, 24)
     gap = spin(windows, "Tile gaps (px)", "appearance", "tile_gap", 0, 12)
     master = spin(windows, "Master width (%)", "windows", "master_percent", 25, 75)
+    master.set_tooltip_text("Default for outputs; dragging a tile divider overrides that output for this session. Changing this value resets width overrides.")
     floating_hint = field(windows, "Floating / tiling", Gtk.Label(xalign=0))
 
     displays = category("Displays")
@@ -512,8 +655,8 @@ def settings_window(initial_page="Windows"):
             snapshot = read_outputs()
             display_message.set_text(snapshot.get("error", ""))
             for output in snapshot["outputs"]:
-                controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-                grid = Gtk.Grid(column_spacing=8, row_spacing=6)
+                controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+                grid = Gtk.Grid(column_spacing=6, row_spacing=4)
                 controls.pack_start(Gtk.Label(label=output.get("description") or output["name"], xalign=0, wrap=True), False, False, 0)
                 controls.pack_start(grid, False, False, 0)
                 enabled = field(grid, "Enabled", Gtk.Switch())
@@ -552,11 +695,20 @@ def settings_window(initial_page="Windows"):
     load_displays()
 
     appearance = category("Appearance")
+    profiles = themes()
+    theme_choice = combo(appearance, "Theme profile", [(key, profiles[key]["name"]) for key in profiles.sections()], config.get("appearance", "theme"))
+    background_type = combo(appearance, "Background", [("color", "Solid color"), ("image", "Wallpaper image")],
+        ("image" if config.get("wallpaper", "path") else "color") if config.get("wallpaper", "type") == "auto" else config.get("wallpaper", "type"))
     image = file_field(appearance, "Wallpaper", config.get("wallpaper", "path"))
     mode = combo(appearance, "Wallpaper fit", [(item, item.capitalize()) for item in ["fill", "fit", "center", "stretch", "tile"]], config.get("wallpaper", "mode"))
     color = field(appearance, "Background color", Gtk.Entry(text=config.get("wallpaper", "color")))
+    def background_changed(*args):
+        image.get_parent().set_sensitive(background_type.get_active_id() == "image")
+        mode.set_sensitive(background_type.get_active_id() == "image")
+    background_type.connect('changed', background_changed);background_changed()
 
     inputs = category("Input")
+    hover_focus = switch(inputs, "Focus on hover", "input", "focus_follows_mouse")
     modifier = combo(inputs, "Shortcut / drag modifier", [("alt", "Alt"), ("super", "Super / Windows")], config.get("input", "modifier"))
     repeat_rate = spin(inputs, "Repeat rate (keys/s)", "input", "repeat_rate", 1, 100)
     repeat_delay = spin(inputs, "Repeat delay (ms)", "input", "repeat_delay", 100, 1500)
@@ -565,10 +717,10 @@ def settings_window(initial_page="Windows"):
         prefix = "Super" if modifier.get_active_id() == "super" else "Alt"
         floating_hint.set_text(f"{prefix}+T (also {prefix}+Space)")
         shortcut_help.set_text("\n".join(f"{prefix}+{keys}   {description}" for keys, description in
-            [("Enter", "Kitty"), ("T / Space", "Floating / tiled"), ("F", "Fullscreen"), ("M", "Maximize"),
+            [("Enter", "Kitty"), ("T / Space", "Floating / tiled"), ("F", "Fullscreen"), ("M", "Maximize"), ("A", "Keep above others"),
              ("D / Shift+D", "Apps / commands"), (",", "Settings"), ("1–9", "Workspace"),
-             ("Shift+1–9", "Move to workspace"), ("Tab", "Next window"), ("Q", "Close window"),
-             ("Escape", "Log out"), ("left / right drag", "Move / resize")]))
+             ("Shift+1–9", "Move to workspace"), ("Tab / Shift+Tab", "Window switcher"), ("Q", "Close window"),
+             ("Escape", "Log out"), ("left / right drag", "Move / resize")])+"\nCtrl+Shift+arrows   Move focused tile")
     modifier.connect("changed", update_shortcuts);update_shortcuts()
     field(inputs, "Shortcuts", shortcut_help)
 
@@ -617,8 +769,9 @@ def settings_window(initial_page="Windows"):
     power.connect("clicked", shutdown);field(session, "", power)
 
     panel_page = category("Panel")
-    panel_enabled = switch(panel_page, "Top bar", "panel", "enabled")
-    panel_height = spin(panel_page, "Bar height (px)", "panel", "height", 20, 32)
+    panel_enabled = switch(panel_page, "Panel", "panel", "enabled")
+    panel_position = combo(panel_page, "Screen edge", [(edge, edge.capitalize()) for edge in ("top", "bottom", "left", "right")], config.get("panel", "position"))
+    panel_height = spin(panel_page, "Thickness (px)", "panel", "height", 16, 32)
     panel_metrics = switch(panel_page, "CPU / RAM status", "panel", "metrics")
     panel_clock = switch(panel_page, "Clock", "panel", "clock")
 
@@ -626,7 +779,7 @@ def settings_window(initial_page="Windows"):
         try:
             if not re.fullmatch(r"#[0-9a-fA-F]{6}", color.get_text()):
                 raise ValueError("Use a background color such as #121418")
-            if image.get_text() and not Path(image.get_text()).expanduser().is_file():
+            if background_type.get_active_id() == "image" and (not image.get_text() or not Path(image.get_text()).expanduser().is_file()):
                 raise ValueError("Wallpaper image does not exist")
             paths = {event: entry.get_text().strip() for event, entry in sound_paths.items()}
             for event, path in paths.items():
@@ -637,13 +790,13 @@ def settings_window(initial_page="Windows"):
             if any(display_values(row) != row["original"] for row in display_rows):
                 for row in display_rows:
                     config['output:' + row['name']] = display_values(row)
-            config["appearance"].update(title_height=str(title.get_value_as_int()), tile_gap=str(gap.get_value_as_int()))
+            config["appearance"].update(theme=theme_choice.get_active_id(), title_height=str(title.get_value_as_int()), tile_gap=str(gap.get_value_as_int()))
             config["windows"].update(default_mode=default_mode.get_active_id(), master_percent=str(master.get_value_as_int()))
-            config["input"].update(modifier=modifier.get_active_id(), repeat_rate=str(repeat_rate.get_value_as_int()), repeat_delay=str(repeat_delay.get_value_as_int()))
-            config["panel"].update(enabled=str(panel_enabled.get_active()).lower(), height=str(panel_height.get_value_as_int()),
+            config["input"].update(focus_follows_mouse=str(hover_focus.get_active()).lower(), modifier=modifier.get_active_id(), repeat_rate=str(repeat_rate.get_value_as_int()), repeat_delay=str(repeat_delay.get_value_as_int()))
+            config["panel"].update(position=panel_position.get_active_id(), enabled=str(panel_enabled.get_active()).lower(), height=str(panel_height.get_value_as_int()),
                 metrics=str(panel_metrics.get_active()).lower(), clock=str(panel_clock.get_active()).lower())
             config["controls"].update(volume_step=str(volume_step.get_value_as_int()), brightness_step=str(brightness_step.get_value_as_int()))
-            config["wallpaper"].update(path=image.get_text(), mode=mode.get_active_id(), color=color.get_text())
+            config["wallpaper"].update(type=background_type.get_active_id(), path=image.get_text(), mode=mode.get_active_id(), color=color.get_text())
             config["notifications"].update(enabled=str(notifications.get_active()).lower(), indicators=str(indicators.get_active()).lower(),
                 timeout=str(timeout.get_value_as_int()), width=str(notify_width.get_value_as_int()), anchor=anchor.get_active_id())
             config["sounds"].update(enabled=str(sounds.get_active()).lower(), volume=str(sound_volume.get_value() / 100), **paths)
@@ -651,6 +804,7 @@ def settings_window(initial_page="Windows"):
             with tempfile.NamedTemporaryFile("w", dir=CONFIG.parent, delete=False) as temporary:
                 config.write(temporary);temporary_path = Path(temporary.name)
             temporary_path.replace(CONFIG)
+            provider.load_from_data(theme_style(settings_css, config).encode())
             action("apply")
             status.set_text("Settings saved. Display changes are checked by the compositor.")
             GLib.timeout_add(800, display_feedback)
@@ -667,7 +821,7 @@ def settings_window(initial_page="Windows"):
         if save():send("startup-sound")
     preview = Gtk.Button(label="Save and preview startup sound")
     preview.connect("clicked", preview_sound);field(audio, "Preview", preview)
-    buttons = Gtk.Box(spacing=8)
+    buttons = Gtk.Box(spacing=4)
     root.pack_end(buttons, False, False, 0)
     apply_button = Gtk.Button(label="Apply");apply_button.connect("clicked", save)
     buttons.pack_end(apply_button, False, False, 0)
@@ -708,7 +862,7 @@ def main():
         settings_window(arguments.page)
     elif arguments.command == "doctor":
         print(json.dumps({"programs": {name: shutil.which(name) for name in
-            ["mako", "wofi", "swaybg", "kitty", "grim", "wpctl", "brightnessctl", "busctl", "pw-play", "paplay"]},
+            ["mako", "wofi", "swaybg", "kitty", "grim", "wpctl", "pactl", "brightnessctl", "busctl", "pw-play", "paplay"]},
             "backlight": [path.name for path in Path("/sys/class/backlight").glob("*")],
             "settings": str(CONFIG)}, indent=2))
     else:

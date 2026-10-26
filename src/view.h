@@ -15,8 +15,10 @@ struct madway_view
 {
     struct madway_server *server;
     struct madway_output *output;
-    unsigned workspace;
-    bool mapped, floating, compact_frame;
+    unsigned workspace, id;
+    bool mapped, floating, compact_frame, keep_above;
+    double tile_weight;
+    struct wlr_box tile_geometry;
     struct wlr_box floating_geometry;
     struct wl_list layout_link;
     struct wlr_xdg_toplevel *toplevel;

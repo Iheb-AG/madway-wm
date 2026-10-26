@@ -10,7 +10,60 @@ sounds, a compact top bar, a desktop utility menu, and categorized settings.
 
 ![madway with Kitty, Firefox, and settings](docs/screenshots/workstation.png)
 
-[Desktop menu screenshot](docs/screenshots/desktop-menu.png) · [Screenshot details](docs/screenshots/README.md)
+[Desktop menu screenshot](docs/screenshots/desktop-menu.png) · [Audio mixer](docs/screenshots/panel-audio.png) · [Application search](docs/screenshots/launcher.png) · [Screenshot details](docs/screenshots/README.md)
+
+The audio dropdown lists output devices, microphone/monitor inputs, and active
+playback/recording streams. Each has a 0–100% volume slider and mute control;
+outputs/inputs also offer default-device selection for new streams. Application
+rows appear while a stream exists, so silent/inactive apps may not be listed.
+Device changes are refreshed every two seconds. In a nested session, these are
+the audio devices/streams of your existing sound server.
+
+Hover **Applications**, **Settings**, **Window**, **Workspaces**, or **Session**
+in the madway menu to open a list beside the parent. Click also opens the list;
+Left returns, Right opens a focused submenu, and Escape closes it. Applications
+includes installed visible desktop entries and a search action. **Alt+D** opens
+a compact centered search palette; **Alt+Shift+D** searches commands/scripts.
+
+**Alt+Tab** now shows a window list on the focused output. Hold Alt and press Tab
+again to cycle, Shift+Tab to go backward, release Alt to keep the selection, or
+press Escape to cancel. If the configured modifier is Super, use Super instead.
+The list includes mapped windows on the current global workspace.
+
+For tiled windows, **Ctrl+Shift+Left/Right** exchanges master/stack placement;
+**Ctrl+Shift+Up/Down** reorders the stack. Settings → Input → **Focus on hover**
+enables optional pointer-driven focus (off by default). Layout updates alone do
+not change focus.
+
+Settings → Appearance offers **Black**, **Amber workstation**, **Green terminal**,
+**Slate blue**, and **Paper workstation** profiles, plus an explicit **Solid color**
+or **Wallpaper image** background choice. Themes apply to madway's frames, panel,
+menus, switcher, settings, launcher and notifications. Application-owned UI keeps
+its own theme; background colour/image is chosen separately.
+
+Use `madway-script FILE` for simple workflows and optional
+`~/.config/madway/startup.madway` for startup commands. See the
+[command syntax](docs/SCRIPTING.md), [example](examples/workstation.madway),
+and [window switcher preview](docs/screenshots/switcher.png).
+
+Settings → Panel → **Screen edge** places the panel at the top, bottom, left,
+or right on each monitor. **Thickness** controls its height on horizontal edges
+and width on vertical edges. Side panels use compact buttons and tooltips;
+dropdowns open toward the desktop. Placement applies live and is saved.
+
+Use the panel's **Window → Keep above others**, or **Alt+A**, to pin a window
+above other applications, including fullscreen video. It stays on its workspace
+and below shell panels/menus. This is useful for PiP; enable it on the PiP window.
+The option toggles independently of floating/tiled mode. Super replaces Alt if
+chosen as your modifier.
+
+Resize tiles by dragging madway's shared 1px borders, or **Alt+right-drag** inside
+a tile. Horizontal motion adjusts the master/stack split on that output; vertical
+motion inside stack tiles adjusts a neighbouring pair of heights. The layout
+keeps its gaps and tiles remain tiled. A single tile already fills the output;
+outer output edges cannot be dragged outward. Split widths and window weights
+are session state. Changing the default **Master width** setting resets width
+overrides; new windows start with equal weight.
 
 ## Build
 
@@ -39,7 +92,8 @@ Running `./build/madway` directly starts only the compositor.
 
 Desktop runtime dependencies: `python3` with PyGObject (`gi`), GTK 3, Gio, and GtkLayerShell 0.1
 introspection bindings (`gtk-layer-shell`), `dbus-run-session`, **Mako**, **Wofi**, **swaybg**, **Kitty**,
-`notify-send`, and **WirePlumber** (`wpctl`). Sounds use `pw-play` (PipeWire) or
+`notify-send`, **WirePlumber** (`wpctl`), and **pactl** (`libpulse` on Arch).
+The audio mixer requires a PulseAudio-compatible server, such as **pipewire-pulse**. Sounds use `pw-play` (PipeWire) or
 `paplay` (PulseAudio). Brightness uses optional `brightnessctl`, otherwise logind
 through `busctl`. These programs are already installed here except brightnessctl.
 
@@ -67,13 +121,13 @@ New normal windows **float by default**. Choose Floating or Master/stack in
 Settings → Windows to set the policy for future windows. Use **Alt+T** to switch
 the focused window between floating and tiled (Alt+Space remains an alias).
 When tiling, the first tile is the master on the left, with later tiles stacked
-on the right. Master width is configurable from 25% to 75%. There are 2 logical pixels between
+on the right. Master width is configurable from 25% to 75%. There is 1 logical pixel between
 tiles and no outer padding. A single tile occupies the output. Focus changes do
 not reorder the tiles. New windows use the output under the pointer when possible.
 
 To prioritize application space, tiled server-decorated windows have only a 1px
-border; no title bar. The focused tile has an amber border. Floating windows have
-a 16-logical-pixel title bar by default, 1px bevels, a monospace title, and square maximize/
+border; no title bar. The focused tile has a light gray border. Floating windows have
+a 14-logical-pixel title bar by default, 1px bevels, a monospace title, and square maximize/
 close controls. Inactive floating titles are slate gray. Title images are cached
 until their text, size, or state changes. Dialogs with a parent window float by
 default.
@@ -173,15 +227,15 @@ stop the compositor. Client connections are closed during shutdown.
 ## Desktop services and settings
 
 **Alt+Comma** opens the settings window. It controls wallpaper image/fit/color,
-floating title height (14–24px), tile gaps (0–12px), notifications, session sounds,
+floating title height (12–24px), tile gaps (0–12px), notifications, session sounds,
 volume, and brightness. Settings are divided into Windows, Displays, Appearance,
 Input, Notifications, Audio & brightness, Session, and Panel categories. The settings
-window uses madway’s own title bar, capped at 16px, instead of GTK’s larger header. Apply saves `~/.config/madway/settings.ini` (or
+window uses madway’s own title bar, capped at 14px, instead of GTK’s larger header. Apply saves `~/.config/madway/settings.ini` (or
 `$XDG_CONFIG_HOME/madway/settings.ini`) and updates the running session. The
 provided `share/madway/settings.ini` documents the defaults. Tiled windows still
 have no title bar; fullscreen applications have no madway borders or gaps.
 
-Mako displays application notifications at the top right with square amber
+Mako displays application notifications at the top right with square gray
 borders. Volume up/down/mute and brightness up/down keys work without modifiers
 and display short percentage/progress notifications. Changes use 5% steps;
 volume is capped at 100% and brightness at 1–100%. The settings sliders offer
@@ -199,7 +253,7 @@ uses an overlay only while open, so it reserves no permanent screen area.
 Swaybg manages the wallpaper on the background layer. Choose an image in
 settings or leave the path empty for a solid color. Supported image fitting
 modes are fill, fit, center, stretch, and tile. Settings and launcher windows
-use the same charcoal/amber monospace styling as the compositor.
+use the same compact black/grayscale monospace styling as the compositor.
 
 No wallpaper images or sounds are bundled or selected by default. The personal
 `longhorn assets/` directory is ignored by Git and excluded from installation.
@@ -239,12 +293,15 @@ Then run `~/.local/bin/madway-session`. For a native login entry and system inst
 
 ## Top bar and desktop menu
 
-A 24px top bar appears on each output. It provides the madway menu, Apps and Run
-launchers, Settings, nine workspace buttons, the active window title, audio access,
-a clock, and session controls. CPU/RAM status is optional. Narrow outputs collapse
-utilities into the menu and display the active workspace. Panel settings control
-visibility, height (20–32px), telemetry, and the clock. Tiling and maximization
-reserve the bar's space; fullscreen applications hide the bar on their output.
+An 18px black top bar appears on each output. Apps, Run, and Settings are grouped
+under **madway**. Every remaining control opens a dropdown: workspace selection,
+active-window actions, system status, audio/brightness, clock, and session tools.
+The status dropdown shows CPU/RAM readings; clock and status menus link to their
+options. Narrow outputs hide optional status/session controls. Panel settings
+control visibility, height (16–32px), telemetry, and the clock. Tiling and
+maximization reserve the bar's space; fullscreen applications hide it on their
+output. Custom title bars default to 14px, tile gaps to 1px, and shell/menu text
+uses smaller monospace fonts with tighter padding and neutral gray focus states.
 
 Click **madway** or **right-click empty desktop space** to open the same compact
 menu. It contains application/command launchers, Kitty, settings categories,

@@ -13,6 +13,36 @@ if [ "${1-}" = "--native" ]; then
     unset WAYLAND_DISPLAY WAYLAND_SOCKET DISPLAY
     export MADWAY_NATIVE=1 WLR_BACKENDS=drm,libinput
     export XDG_CURRENT_DESKTOP=madway XDG_SESSION_DESKTOP=madway XDG_SESSION_TYPE=wayland
+    # Login managers may discard session stderr. Keep a private diagnostic log.
+    # --help/--version and other explicit command arguments retain normal stdout.
+    if [ "$#" -eq 0 ]; then
+        umask 077
+        madway_log_stamp=$(date -Is) || madway_log_stamp=unknown
+        # Probe writes in a subshell: set -e must never turn a full/unwritable
+        # diagnostic filesystem into a failed desktop login.
+        madway_prepare_log() (
+            madway_log_dir=$1
+            mkdir -p -- "$madway_log_dir" || exit 1
+            # An empty failed attempt must not replace the last useful log.
+            if [ -s "$madway_log_dir/session.log" ]; then
+                mv -f -- "$madway_log_dir/session.log" "$madway_log_dir/session.previous.log" || exit 1
+            fi
+            printf 'madway native session: %s\nCompositor: %s\n' "$madway_log_stamp" "$madway_binary" >"$madway_log_dir/session.log"
+        )
+        madway_log_path=
+        madway_state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/madway"
+        if madway_prepare_log "$madway_state_dir" 2>/dev/null; then
+            madway_log_path="$madway_state_dir/session.log"
+        elif [ -n "${XDG_RUNTIME_DIR-}" ] && madway_prepare_log "$XDG_RUNTIME_DIR/madway-logs" 2>/dev/null; then
+            madway_log_path="$XDG_RUNTIME_DIR/madway-logs/session.log"
+            printf 'madway: persistent log unavailable; using %s\n' "$madway_log_path" >&2 || :
+        else
+            printf 'madway: file logging unavailable; starting with login-manager stdout/stderr\n' >&2 || :
+        fi
+        if [ -n "$madway_log_path" ]; then
+            exec >>"$madway_log_path" 2>&1
+        fi
+    fi
     if [ -z "${DBUS_SESSION_BUS_ADDRESS-}" ] && [ -S "${XDG_RUNTIME_DIR-}/bus" ]; then
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
     fi

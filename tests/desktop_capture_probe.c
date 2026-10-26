@@ -18,7 +18,7 @@ static struct wlr_keyboard keyboard;
 static struct wlr_pointer pointer;
 static struct wl_event_source *timer;
 static struct wl_listener destroy;
-static bool menu_opened;
+static bool menu_opened, audio_opened, switcher_opened;
 static const struct wlr_keyboard_impl keyboard_impl={.name="capture-keyboard"};
 static const struct wlr_pointer_impl pointer_impl={.name="capture-pointer"};
 static int arrange(void *unused)
@@ -30,7 +30,7 @@ static int arrange(void *unused)
         if(!view->mapped)continue;
         const char *id=view->toplevel->app_id,*title=view->toplevel->title;
         int x=28,y=54,w=700,h=420;
-        if(id && !strcmp(id,"org.madway.Settings")){x=28;y=530;w=700;h=420;}
+        if(id && !strcmp(id,"org.madway.Settings")){x=28;y=510;w=620;h=340;}
         else if((id && strstr(id,"firefox")) || (title && strstr(title,"Firefox"))){x=760;y=54;w=800;h=650;}
         wlr_scene_node_set_position(&view->scene_tree->node,x,y);
         if(view->toplevel->base->geometry.width!=w || view->toplevel->base->geometry.height!=h)
@@ -49,6 +49,32 @@ static int arrange(void *unused)
             wlr_pointer_notify_button(&pointer,&button);
             wl_signal_emit_mutable(&pointer.events.frame,NULL);
         }
+    }
+    command=getenv("MADWAY_CAPTURE_AUDIO");
+    if(!audio_opened && command && access(command,F_OK)==0)
+    {
+        audio_opened=true;
+        struct wlr_pointer_motion_absolute_event motion={.pointer=&pointer,.time_msec=200,.x=1452.0/1600,.y=9.0/1000};
+        wl_signal_emit_mutable(&pointer.events.motion_absolute,&motion);
+        wl_signal_emit_mutable(&pointer.events.frame,NULL);
+        for(int pressed=1;pressed>=0;--pressed)
+        {
+            struct wlr_pointer_button_event button={.pointer=&pointer,.time_msec=200,.button=BTN_LEFT,
+                .state=pressed?WL_POINTER_BUTTON_STATE_PRESSED:WL_POINTER_BUTTON_STATE_RELEASED};
+            wlr_pointer_notify_button(&pointer,&button);wl_signal_emit_mutable(&pointer.events.frame,NULL);
+        }
+    }
+    command=getenv("MADWAY_CAPTURE_SWITCHER");
+    if(!switcher_opened && command && access(command,F_OK)==0) {
+        switcher_opened=true;
+        struct wlr_keyboard_key_event event={.time_msec=300,.keycode=KEY_LEFTALT,.state=WL_KEYBOARD_KEY_STATE_PRESSED,.update_state=true};
+        wlr_keyboard_notify_key(&keyboard,&event);
+        event.keycode=KEY_TAB;wlr_keyboard_notify_key(&keyboard,&event);
+        event.state=WL_KEYBOARD_KEY_STATE_RELEASED;wlr_keyboard_notify_key(&keyboard,&event);
+    }
+    if(switcher_opened && command && access(command,F_OK)!=0) {
+        struct wlr_keyboard_key_event event={.time_msec=301,.keycode=KEY_LEFTALT,.state=WL_KEYBOARD_KEY_STATE_RELEASED,.update_state=true};
+        wlr_keyboard_notify_key(&keyboard,&event);switcher_opened=false;
     }
     wl_event_source_timer_update(timer,100);return 0;
 }

@@ -39,6 +39,12 @@ def inspect_settings():
                     return grid.get_child_at(1, row)
             raise AssertionError("Missing setting: " + label)
 
+        control("Appearance", "Theme profile").set_active_id("amber")
+        control("Appearance", "Background").set_active_id("color")
+        control("Appearance", "Background color").set_text("#101012")
+        control("Input", "Focus on hover").set_active(True)
+        edges=control("Panel", "Screen edge")
+        assert [row[1] for row in edges.get_model()]==["top","bottom","left","right"]
         control("Windows", "New windows").set_active_id("tiled")
         control("Windows", "Title height (px)").set_value(14)
         control("Windows", "Master width (%)").set_value(60)
@@ -56,6 +62,10 @@ def inspect_settings():
         apply_button.clicked()
         config = configparser.ConfigParser(interpolation=None)
         config.read(module["CONFIG"])
+        assert config.get("appearance", "theme") == "amber"
+        assert config.get("wallpaper", "type") == "color"
+        assert config.get("wallpaper", "color") == "#101012"
+        assert config.getboolean("input", "focus_follows_mouse")
         assert config.get("windows", "default_mode") == "tiled"
         assert config.getint("windows", "master_percent") == 60
         assert config.getint("appearance", "title_height") == 14

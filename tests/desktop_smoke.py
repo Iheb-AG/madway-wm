@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -51,6 +52,21 @@ elif name=='brightnessctl':
 p.write_text(json.dumps(state))
 ''')
         path.chmod(0o700)
+    pactl=bin_dir/'pactl'
+    pactl.write_text('#!'+sys.executable+'\n'+"""
+import json,sys
+args=sys.argv[1:]
+if args[-1]=='info':print(json.dumps(dict(default_sink_name='fixture',default_source_name='fixture')))
+elif 'list' in args:
+    print(json.dumps([dict(index=7,name='fixture',description='Fixture audio',properties={'application.name':'Fixture player'},
+        volume={'mono':{'value_percent':'50%'}},mute=False)]))
+else:
+    from pathlib import Path
+    path=Path(HARDWARE)
+    state=json.loads(path.read_text());state['audio_command']=args;path.write_text(json.dumps(state))
+""")
+    pactl.write_text(pactl.read_text().replace('HARDWARE',repr(str(hardware))))
+    pactl.chmod(0o700)
     kitty=bin_dir/"kitty"
     kitty.write_text('#!/bin/sh\nexec /usr/bin/kitty --config NONE --title floating-fixture -o linux_display_server=wayland -o confirm_os_window_close=0 /bin/sh -c "sleep 30"\n')
     kitty.chmod(0o700)
@@ -70,7 +86,7 @@ p.write_text(json.dumps(state))
     env=os.environ.copy()
     env.update(HOME=str(home),XDG_CONFIG_HOME=str(config_home),XDG_DATA_HOME=str(data_home),
         XDG_RUNTIME_DIR=str(runtime),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='2',WLR_RENDERER='pixman',LIBGL_ALWAYS_SOFTWARE='1',MADWAY_SESSION='1',
-        PATH=str(bin_dir)+':'+env['PATH'],MADWAY_LAUNCH_TEST_READY=str(ready),MADWAY_TEST_HOTPLUG=str(root/'hotplug'))
+        PATH=str(bin_dir)+':'+env['PATH'],MADWAY_LAUNCH_TEST_READY=str(ready),MADWAY_TEST_HOTPLUG=str(root/'hotplug'),MADWAY_TEST_MENU_READY=str(root/'menu-ready'),MADWAY_TEST_FEATURES_READY=str(root/'features-ready'))
     env.pop('DISPLAY',None)
     env.pop('MADWAY_NATIVE',None)
     server_env=env.copy();server_env['LD_PRELOAD']=str(probe)
@@ -85,6 +101,11 @@ p.write_text(json.dumps(state))
             time.sleep(.03)
         raise AssertionError(log_path.read_text())
     def control(name,**values):
+        if any(key != 'value' for key in values):
+            path=runtime/('madway-'+env['WAYLAND_DISPLAY'])/'control.sock'
+            with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as channel:
+                channel.sendto(json.dumps(dict(action=name,**values)).encode(),str(path))
+            return
         command=[str(repo/'scripts/madway-shell'),'action',name]
         if 'value' in values:command+=['--value',str(values['value'])]
         subprocess.run(command,env=env,check=True,timeout=5)
@@ -181,6 +202,42 @@ p.write_text(json.dumps(state))
             config['panel'].update(enabled='true',height='22');apply_config()
             wait_for(lambda:'PANEL HEIGHT RELOAD PASS' in log_path.read_text())
             print('PASS: desktop right-click menu/window action, fullscreen panel hiding, and workspace controls.')
+            subprocess.run([sys.executable,str(repo/'tests/panel_ui.py')],env=env,check=True,timeout=10)
+            for values, expected in [
+                (dict(kind='sink-input',id=7,operation='volume',value=160), ['set-sink-input-volume','7','100%']),
+                (dict(kind='source',id=7,operation='mute',value=True), ['set-source-mute','7','1']),
+                (dict(kind='sink',id=7,operation='default'), ['set-default-sink','7'])]:
+                control('audio-control',**values)
+                wait_for(lambda:json.loads(hardware.read_text()).get('audio_command')==expected)
+            print('PASS: mixer IPC volume limiting, microphone mute and default-output selection (mocked server).')
+            (root/'menu-ready').touch()
+            control('panel-menu',page='Audio',x=10,y=24)
+            wait_for(lambda:'AUDIO DROPDOWN IPC PASS' in log_path.read_text())
+            time.sleep(.15)
+            control('panel-menu',page='Clock',x=10,y=24)
+            wait_for(lambda:'CLOCK DROPDOWN IPC PASS' in log_path.read_text())
+            assert 'Traceback (most recent call last)' not in log_path.read_text(),log_path.read_text()
+            script=root/'workflow.madway'
+            script.write_text('theme terminal\nbackground color #102030\nset input.focus_follows_mouse true\n')
+            subprocess.run([str(repo/'scripts/madway-script'),str(script),'--check'],env=env,check=True)
+            subprocess.run([str(repo/'scripts/madway-script'),str(script)],env=env,check=True)
+            wait_for(lambda:'#b8dac0' in mako_config.read_text() and '#102030' in config_path.read_text())
+            config.read(config_path)
+            assert config['appearance']['theme']=='terminal'
+            assert config['wallpaper']['type']=='color' and config['wallpaper']['color']=='#102030'
+            (root/'features-ready').touch()
+            wait_for(lambda:'VISIBLE SWITCHER CYCLE CANCEL AND COMMIT PASS' in log_path.read_text(),12)
+            assert 'DIRECTIONAL TILE SHORTCUTS PASS' in log_path.read_text()
+            assert 'OPTIONAL POINTER FOCUS AND REBASE GUARD PASS' in log_path.read_text()
+            print('PASS: theme/background scripting, directional tiling, optional hover focus and visible window switcher.')
+            wait_for(lambda:'TILED SHARED EDGE AND MODIFIER RESIZE PASS' in log_path.read_text(),12)
+            assert 'KEEP ABOVE STACKING INPUT FULLSCREEN AND WORKSPACE PASS' in log_path.read_text()
+            control('window-above');wait_for(lambda:json.loads(desktop_file.read_text()).get('keep_above') is True)
+            control('window-above');wait_for(lambda:json.loads(desktop_file.read_text()).get('keep_above') is False)
+            for position in ('top','bottom','left','right','top'):
+                config.read(config_path);config['panel']['position']=position;apply_config()
+                wait_for(lambda:'PANEL EDGE '+position+' RESERVATION PASS' in log_path.read_text())
+            print('PASS: always-above stacking/input/fullscreen, tiled resizing, and all four panel-edge reservations.')
             control('shutdown-sound')
             wait_for(lambda:audio_log.exists() and 'shutdown.ogg' in audio_log.read_text())
             assert 'startup.ogg' in audio_log.read_text()
@@ -189,6 +246,7 @@ p.write_text(json.dumps(state))
             assert 'logout.ogg' in audio_log.read_text()
         print(log_path.read_text())
         # Restart the same temporary session to verify saved monitor profiles.
+        (config_home/'madway/startup.madway').write_text('exec madway-fixture\n')
         restart_path=root/'restart.log'
         with restart_path.open('w') as restart_log:
             server=subprocess.Popen([str(build/'madway')],env=env,stdout=restart_log,stderr=restart_log)
@@ -198,6 +256,7 @@ p.write_text(json.dumps(state))
                 assert server.poll() is None,restart_path.read_text()
                 time.sleep(.03)
             else:raise AssertionError(restart_path.read_text())
+            wait_for(lambda:len(marker.read_text().splitlines())==3)
             restored=json.loads(outputs_file.read_text())
             assert not restored['error'] and len(restored['outputs'])==2,restored
             by_name={output['name']:output for output in restored['outputs']}
@@ -205,7 +264,7 @@ p.write_text(json.dumps(state))
             assert by_name[second]['width']==800 and by_name[second]['x']==640
             server.send_signal(signal.SIGTERM);server.wait(timeout=5)
             assert server.returncode==0,restart_path.read_text()
-        print('PASS: monitor profiles restored after compositor restart.')
+        print('PASS: monitor profiles restored and opt-in startup script executed after compositor restart.')
         print('PASS: private Mako notifications, swaybg, both Wofi launchers with keyboard input, real settings GUI, media-key indicators with mocked hardware, live config reload, and all three sound events with mocked playback.')
     finally:
         if server is not None and server.poll() is None:

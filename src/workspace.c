@@ -33,6 +33,7 @@ static bool is_tile(struct madway_view *view, struct madway_output *output)
 
 static void configure_tile(struct madway_view *view, int x, int y, int width, int height)
 {
+    view->tile_geometry = (struct wlr_box){x, y, width, height};
     view->resize_anchor_pending = false;
     int border, title;
     madway_frame_extents(view, &border, &title);
@@ -59,7 +60,7 @@ void madway_workspace_arrange(struct madway_server *server)
         }
         bool visible = view->output != NULL && madway_view_visible(view);
         struct madway_view *fullscreen = visible ? fullscreen_on(server, view->output) : NULL;
-        if (fullscreen != NULL && view != fullscreen) visible = false;
+        if (fullscreen != NULL && view != fullscreen && !view->keep_above) visible = false;
         wlr_scene_node_set_enabled(&view->scene_tree->node, visible);
     }
 
@@ -71,8 +72,12 @@ void madway_workspace_arrange(struct madway_server *server)
         int x = output->usable_area.x, y = output->usable_area.y;
         int gap = server->config.tile_gap;
         unsigned count = 0;
+        double total_weight = 0, before_weight = 0;
         wl_list_for_each(view, &server->layout_views, layout_link)
-            if (is_tile(view, output)) ++count;
+            if (is_tile(view, output)) {
+                if (count > 0) total_weight += view->tile_weight > 0 ? view->tile_weight : 1;
+                ++count;
+            }
         unsigned index = 0;
         wl_list_for_each(view, &server->layout_views, layout_link)
         {
@@ -92,7 +97,7 @@ void madway_workspace_arrange(struct madway_server *server)
             else
             {
                 // No outer padding. Master on the left; equally divided stack on the right.
-                int master_width = (width - gap) * server->config.master_percent / 100;
+                int master_width = (width - gap) * (output->master_percent ? output->master_percent : server->config.master_percent) / 100;
                 if (index == 0)
                     configure_tile(view, x, y, master_width, height);
                 else
@@ -100,8 +105,11 @@ void madway_workspace_arrange(struct madway_server *server)
                     int stack_count = (int)count - 1, slot = (int)index - 1;
                     int available = height - gap * (stack_count - 1);
                     if (available < stack_count) available = stack_count;
-                    int top = available * slot / stack_count;
-                    int bottom = available * (slot + 1) / stack_count;
+                    double weight = view->tile_weight > 0 ? view->tile_weight : 1;
+                    int extra = available - stack_count;
+                    int top = slot + (int)(extra * before_weight / total_weight);
+                    int bottom = slot + 1 == stack_count ? available : slot + 1 + (int)(extra * (before_weight + weight) / total_weight);
+                    before_weight += weight;
                     configure_tile(view, x + master_width + gap,
                             y + top + gap * slot,
                             width - master_width - gap, bottom - top);
@@ -121,7 +129,7 @@ void madway_workspace_arrange(struct madway_server *server)
                             fullscreen_on(server, output) == NULL);
         }
     madway_session_publish_state(server);
-    madway_rebase_cursor(server);
+    if (server->interactive_view == NULL) madway_rebase_cursor(server);
 }
 
 void madway_workspace_focus(struct madway_server *server)
@@ -217,4 +225,120 @@ void madway_cycle_focus(struct madway_server *server, bool backwards)
             return;
         }
     }
+}
+
+void madway_move_tile(struct madway_server *server, const char *direction)
+{
+    if (server->interactive_view != NULL) return;
+    struct madway_view *view = server->focused_view;
+    if (view == NULL || !is_tile(view, view->output)) return;
+    unsigned count = 0, current = 0;
+    struct madway_view *entry;
+    wl_list_for_each(entry, &server->layout_views, layout_link)
+        if (is_tile(entry, view->output))
+        { if (entry == view) current = count; ++count; }
+    unsigned target = current;
+    if (!strcmp(direction, "left") && current > 0) target = 0;
+    else if (!strcmp(direction, "right") && current == 0 && count > 1) target = 1;
+    else if (!strcmp(direction, "up") && current > 1) target = current - 1;
+    else if (!strcmp(direction, "down") && current > 0 && current + 1 < count) target = current + 1;
+    if (target == current) return;
+    unsigned index = 0;
+    wl_list_for_each(entry, &server->layout_views, layout_link)
+        if (is_tile(entry, view->output) && index++ == target)
+        {
+            struct wl_list placeholder;
+            wl_list_insert(&view->layout_link, &placeholder);
+            wl_list_remove(&view->layout_link);
+            wl_list_insert(&entry->layout_link, &view->layout_link);
+            wl_list_remove(&entry->layout_link);
+            wl_list_insert(&placeholder, &entry->layout_link);
+            wl_list_remove(&placeholder);
+            madway_workspace_arrange(server);
+            return;
+        }
+}
+
+void madway_switcher_step(struct madway_server *server, bool backwards)
+{
+    bool starting = !server->switcher_active;
+    if (starting)
+    {
+        server->switcher_origin = server->focused_view != NULL ? server->focused_view->id : 0;
+        server->switcher_active = true;
+    }
+    madway_cycle_focus(server, backwards);
+    madway_session_publish_state(server);
+    if (starting) madway_session_action(server, "switcher-show");
+}
+
+void madway_switcher_finish(struct madway_server *server, bool cancel)
+{
+    if (!server->switcher_active) return;
+    server->switcher_active = false;
+    if (cancel)
+    {
+        struct madway_view *entry;
+        wl_list_for_each(entry, &server->layout_views, layout_link)
+            if (entry->id == server->switcher_origin && madway_view_visible(entry))
+            { madway_focus_view(server, entry); break; }
+    }
+    madway_session_publish_state(server);
+    madway_session_action(server, "switcher-hide");
+}
+
+
+bool madway_tile_resize_begin(struct madway_view *view, uint32_t edges)
+{
+    struct madway_server *server = view->server;
+    if (view->output == NULL || !is_tile(view, view->output)) return false;
+    unsigned count = 0, index = 0;
+    struct madway_view *entry, *previous = NULL, *next = NULL;
+    bool found = false;
+    wl_list_for_each(entry, &server->layout_views, layout_link)
+        if (is_tile(entry, view->output)) {
+            if (entry == view) { index = count; found = true; }
+            else if (found && next == NULL) next = entry;
+            else if (!found) previous = entry;
+            ++count;
+        }
+    if (count < 2) return false;
+    bool horizontal = (index == 0 && (edges & WLR_EDGE_RIGHT)) ||
+        (index > 0 && (edges & WLR_EDGE_LEFT));
+    struct madway_view *neighbor = index > 1 && (edges & WLR_EDGE_TOP) ? previous :
+        index > 0 && (edges & WLR_EDGE_BOTTOM) ? next : NULL;
+    if (!horizontal && neighbor == NULL) return false;
+    server->interactive_neighbor_id = neighbor != NULL ? neighbor->id : 0;
+    server->interactive_master_percent = view->output->master_percent ? view->output->master_percent : server->config.master_percent;
+    if (neighbor != NULL) {
+        server->interactive_pair_height = view->tile_geometry.height + neighbor->tile_geometry.height;
+        server->interactive_weight_total = view->tile_weight + neighbor->tile_weight;
+    }
+    return true;
+}
+
+void madway_tile_resize_update(struct madway_server *server, int dx, int dy)
+{
+    struct madway_view *view = server->interactive_view;
+    if (view == NULL || view->output == NULL || !is_tile(view, view->output)) return;
+    struct madway_view *neighbor = NULL, *entry;
+    wl_list_for_each(entry, &server->layout_views, layout_link)
+        if (entry->id == server->interactive_neighbor_id && is_tile(entry, view->output)) neighbor = entry;
+    uint32_t edges = server->interactive_edges;
+    bool master = view->tile_geometry.x == view->output->usable_area.x;
+    int width = view->output->usable_area.width - server->config.tile_gap;
+    if (width > 0 && ((master && (edges & WLR_EDGE_RIGHT)) || (!master && (edges & WLR_EDGE_LEFT)))) {
+        int percent = server->interactive_master_percent + 100 * dx / width;
+        view->output->master_percent = percent < 10 ? 10 : percent > 90 ? 90 : percent;
+    }
+    if (neighbor != NULL && server->interactive_pair_height > 1) {
+        int height = server->interactive_geometry.height + ((edges & WLR_EDGE_TOP) ? -dy : dy);
+        int total = server->interactive_pair_height;
+        int minimum = total >= 68 ? 33 : 1;
+        if (height < minimum) height = minimum;
+        if (height > total - minimum) height = total - minimum;
+        view->tile_weight = server->interactive_weight_total * height / total;
+        neighbor->tile_weight = server->interactive_weight_total - view->tile_weight;
+    }
+    madway_workspace_arrange(server);
 }

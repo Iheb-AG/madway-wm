@@ -8,7 +8,8 @@ struct madway_server;
 struct madway_config {
     int title_height, tile_gap, master_percent;
     int repeat_rate, repeat_delay;
-    bool default_floating, use_super;
+    bool default_floating, use_super, focus_follows_mouse;
+    float surface[4], active[4], text[4], muted[4], border[4], accent[4];
 };
 bool madway_session_init(struct madway_server *server);
 void madway_session_finish(struct madway_server *server);

@@ -316,7 +316,8 @@ int main(int argc, char *argv[])
     }
     server.backgrounds = wlr_scene_tree_create(&server.scene->tree);
     server.windows = wlr_scene_tree_create(&server.scene->tree);
-    if (server.backgrounds == NULL || server.windows == NULL ||
+    server.above_windows = wlr_scene_tree_create(&server.scene->tree);
+    if (server.backgrounds == NULL || server.windows == NULL || server.above_windows == NULL ||
         !madway_init_shell(&server))
     {
         wlr_log(WLR_ERROR, "Could not initialize scene layers and application support");

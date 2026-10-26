@@ -8,6 +8,15 @@ data and ignored Longhorn assets out of the images. Session sounds are disabled.
 
 - [Workstation](workstation.png)
 - [Desktop utility menu](desktop-menu.png)
+- [Panel audio mixer](panel-audio.png)
+- [Compact application search](launcher.png)
+- [Window switcher](switcher.png)
+- [Left panel](panel-left.png)
+- [Bottom panel](panel-bottom.png)
+
+The mixer capture uses deterministic mock speakers, microphone, and application
+stream entries. These demonstrate the real GTK controls without reading or
+changing host audio.
 
 Regenerate from the repository root after building:
 

@@ -1,0 +1,8 @@
+# Validate: madway-script --check examples/workstation.madway
+# Run from a terminal inside madway: madway-script examples/workstation.madway
+# This changes your saved theme/background/input defaults and launches Kitty.
+theme amber
+background color #100c06
+set input.focus_follows_mouse false
+workspace 1
+exec kitty --title "Work terminal"

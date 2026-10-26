@@ -41,19 +41,64 @@ A native session needs an active local login with device access through logind
 or a correctly configured libseat backend. The installer does not change device
 permissions, add users to privileged groups, or enable seat/system services.
 
+## If login shows a black screen
+
+The login entry must contain `Exec=/usr/local/bin/madway-session --native`
+without quotes around the executable. Plasma Login's session wrapper executes
+the field without evaluating shell quotes; the earlier quoted entry exited
+with status 127 before madway started. Reinstall from this checkout to update it:
+
+```sh
+./scripts/install-madway
+```
+
+Native launches now save compositor/helper output in
+`${XDG_STATE_HOME:-$HOME/.local/state}/madway/session.log`, retaining one previous
+nonempty attempt as `session.previous.log`. This log is private to your user.
+If persistent logging fails (including a full filesystem), the launcher uses
+`$XDG_RUNTIME_DIR/madway-logs/session.log` instead. If both locations fail, it
+continues with the login manager's stdout/stderr. Logging failure must not abort
+the desktop. Check the login manager journal if neither log exists
+(`journalctl -b -u display-manager`).
+
+An empty log together with an immediate exit status 1 and "No space left on
+device" in the journal can indicate the earlier launcher's first log write
+aborted startup. Free disk space and update just the launcher from the checkout:
+
+```sh
+df -h /
+sudo install -m755 scripts/madway-session /usr/local/bin/madway-session
+```
+
+Review Trash or cached packages before deleting anything. A full disk can also
+prevent application state, settings and login-manager files from being written;
+the launcher fallback does not resolve those failures.
+
+If the screen is stuck, try Ctrl+Alt+F3, log into the text console, and inspect:
+
+```sh
+tail -n 100 "${XDG_STATE_HOME:-$HOME/.local/state}/madway/session.log"
+```
+
+After returning to your existing desktop, `journalctl -b -1` shows the previous
+boot if you rebooted. Avoid starting `--native` inside an already running desktop
+to troubleshoot; use the nested launch command below for development.
+
 ## Controls in the native session
 
 - **Alt+Enter:** Kitty terminal.
 - **Alt+D / Alt+Shift+D:** applications / commands.
-- **Alt+,** or the bar's Settings button: settings.
+- **Alt+,** or madway → Settings: settings.
 - **Right-click empty desktop space:** desktop utility menu.
-- **Alt+T:** floating/tiled; **Alt+F:** fullscreen.
+- **Alt+T:** floating/tiled; **Alt+F:** fullscreen; **Alt+A:** keep above others.
+- **Alt+right-drag:** resize floating windows or shared tile boundaries.
+- **Ctrl+Shift+arrows:** reorder tiles.
 - **Alt+Escape:** log out of madway.
 - **Ctrl+Alt+F1–F12:** request another VT in a native hardware session.
 
 The modifier can be changed to Super under Input settings. The top bar has
-workspace buttons and a shared utility menu; its height/status/clock options
-are under Panel. It is hidden over fullscreen applications. Sounds and wallpaper
+workspace/window/status dropdowns and a shared utility menu; its height/status/clock options
+are under Panel. Screen edge supports top, bottom, left and right. It is hidden over fullscreen applications. Sounds and wallpaper
 images are opt-in. Your existing `~/.config/madway/settings.ini` is preserved.
 
 This preview has no lock screen, Xwayland, network manager, or full desktop

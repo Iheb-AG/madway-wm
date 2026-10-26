@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=madway (experimental)
 Comment=Minimal madway Wayland desktop
-Exec="@CMAKE_INSTALL_FULL_BINDIR@/madway-session" --native
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/madway-session --native
 TryExec=@CMAKE_INSTALL_FULL_BINDIR@/madway-session
 Type=Application

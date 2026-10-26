@@ -44,8 +44,8 @@ while (($#)); do
     esac
 done
 for path in "$prefix" "$sessions_dir"; do
-    [[ $path == /* && $path != *$'\n'* && $path != *'"'* && $path != *'%'* && $path != *'$'* && $path != *'`'* && $path != *\\* ]] || {
-        echo 'Install paths must be absolute and valid in a desktop entry.' >&2; exit 2;
+    [[ $path == /* && $path != *[[:space:]]* && $path != *'"'* && $path != *'%'* && $path != *'$'* && $path != *'`'* && $path != *\\* ]] || {
+        echo 'Install paths must be absolute, without whitespace, and valid in a desktop entry.' >&2; exit 2;
     }
 done
 if [[ -n $destdir ]]; then
@@ -63,10 +63,10 @@ if [[ -z $destdir && $EUID -ne 0 ]]; then elevate=(sudo); fi
 if [[ $install_deps == true ]]; then
     command -v pacman >/dev/null || { echo '--deps supports Arch/CachyOS; on other distributions install the README dependencies first.' >&2; exit 1; }
     run "${elevate[@]}" pacman -S --needed base-devel cmake pkgconf wlroots0.20 wayland wayland-protocols libxkbcommon pango glib2 \
-        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg kitty wireplumber libnotify pipewire brightnessctl grim
+        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg kitty wireplumber libnotify pipewire pipewire-pulse libpulse brightnessctl grim
 fi
 if [[ $dry_run == false ]]; then
-    for program in cmake cc pkg-config python3 wayland-scanner dbus-run-session kitty mako wofi swaybg wpctl notify-send; do
+    for program in cmake cc pkg-config python3 wayland-scanner dbus-run-session kitty mako wofi swaybg wpctl pactl notify-send; do
         command -v "$program" >/dev/null || { echo "Missing dependency: $program. Use --deps on Arch/CachyOS or see README.md." >&2; exit 1; }
     done
     pkg-config --exists wlroots-0.20 wayland-server xkbcommon pangocairo gio-2.0 || {

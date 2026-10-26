@@ -3,6 +3,7 @@
 #include "view.h"
 #include "decoration.h"
 #include "workspace.h"
+#include "session.h"
 
 #include <linux/input-event-codes.h>
 #include <wlr/util/edges.h>
@@ -50,6 +51,14 @@ void madway_apply_window_state(struct madway_view *view)
     // Invalidate the cached title so its maximize/restore icon also changes.
     view->frame_visible = false;
     madway_frame_update(view);
+}
+
+void madway_set_keep_above(struct madway_view *view, bool above)
+{
+    view->keep_above = above;
+    wlr_scene_node_reparent(&view->scene_tree->node, above ? view->server->above_windows : view->server->windows);
+    madway_workspace_arrange(view->server);
+    if (madway_view_visible(view)) madway_focus_view(view->server, view);
 }
 
 void madway_set_maximized(struct madway_view *view, bool maximized)
@@ -102,10 +111,11 @@ void madway_begin_interactive(struct madway_view *view,
         enum madway_interactive_mode mode, uint32_t edges)
 {
     struct madway_server *server = view->server;
-    if (!view->floating || view->maximized || view->fullscreen || !madway_view_visible(view)) return;
+    if (view->maximized || view->fullscreen || !madway_view_visible(view)) return;
+    if (!view->floating && (mode != MADWAY_RESIZE || !madway_tile_resize_begin(view, edges))) return;
     madway_focus_view(server, view);
     server->interactive_view = view;
-    server->interactive_mode = mode;
+    server->interactive_mode = view->floating ? mode : MADWAY_TILE_RESIZE;
     server->interactive_edges = edges;
     server->interactive_button = BTN_LEFT;
     server->interactive_forward_button = false;
@@ -116,6 +126,7 @@ void madway_begin_interactive(struct madway_view *view,
         .width = view->toplevel->base->geometry.width,
         .height = view->toplevel->base->geometry.height,
     };
+    if (!view->floating) server->interactive_geometry = view->tile_geometry;
     if (mode == MADWAY_RESIZE)
     {
         view->resize_edges = edges;
@@ -127,7 +138,7 @@ void madway_begin_interactive(struct madway_view *view,
 
 void madway_end_interactive(struct madway_server *server)
 {
-    if (server->interactive_view != NULL && server->interactive_mode == MADWAY_RESIZE &&
+    if (server->interactive_view != NULL && (server->interactive_mode == MADWAY_RESIZE || server->interactive_mode == MADWAY_TILE_RESIZE) &&
         server->interactive_view->toplevel->base->initialized)
         wlr_xdg_toplevel_set_resizing(server->interactive_view->toplevel, false);
     if (server->interactive_view != NULL && server->interactive_mode == MADWAY_MOVE)
@@ -140,6 +151,7 @@ void madway_end_interactive(struct madway_server *server)
         wl_list_for_each(output, &server->outputs, link)
             if (output->output == target) { view->output = output; break; }
     }
+    server->interactive_neighbor_id = 0;
     server->interactive_view = NULL;
     server->interactive_mode = MADWAY_NORMAL;
 }
@@ -158,6 +170,11 @@ void madway_update_interactive(struct madway_server *server)
     int dx = (int)(server->cursor->x - server->interactive_x);
     int dy = (int)(server->cursor->y - server->interactive_y);
     struct wlr_box original = server->interactive_geometry;
+    if (server->interactive_mode == MADWAY_TILE_RESIZE)
+    {
+        madway_tile_resize_update(server, dx, dy);
+        return;
+    }
     if (server->interactive_mode == MADWAY_MOVE)
     {
         wlr_scene_node_set_position(&view->scene_tree->node, original.x + dx, original.y + dy);

@@ -41,11 +41,14 @@ add_executable(madway
     src/monitors.h
     src/session.c
     src/session.h
+    src/theme.c
+    src/theme.h
     "${LAYER_HEADER}"
 )
 target_compile_definitions(madway PRIVATE WLR_USE_UNSTABLE)
 target_compile_definitions(madway PRIVATE MADWAY_VERSION="${MADWAY_RELEASE_VERSION}")
 target_compile_definitions(madway PRIVATE
+    MADWAY_THEME_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/share/madway/themes.ini"
     MADWAY_HELPER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/scripts/madway-shell"
     MADWAY_HELPER_INSTALLED="${CMAKE_INSTALL_FULL_BINDIR}/madway-shell")
 
@@ -65,7 +68,11 @@ target_include_directories(madway PRIVATE
 )
 
 install(TARGETS madway RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(PROGRAMS scripts/madway-session scripts/madway-shell scripts/madway-panel DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS scripts/madway-session scripts/madway-shell scripts/madway-panel scripts/madway-script DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY share/madway DESTINATION ${CMAKE_INSTALL_DATADIR})
 
+# Plasma Login/SDDM's session shell does not evaluate quotes in Exec paths.
+if(CMAKE_INSTALL_FULL_BINDIR MATCHES "[ \t\r\n]")
+    message(FATAL_ERROR "The native login entry requires an install bindir without whitespace")
+endif()
 configure_file(share/wayland-sessions/madway.desktop.in madway.desktop @ONLY)

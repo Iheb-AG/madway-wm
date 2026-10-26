@@ -38,6 +38,8 @@ struct madway_server
     struct wl_list layers;
     struct madway_layer *keyboard_layer;
     struct madway_config config;
+    unsigned next_view_id, switcher_origin;
+    bool switcher_active;
     pid_t session_pid;
     int session_control_fd;
     struct wl_event_source *session_control_event;
@@ -50,6 +52,7 @@ struct madway_server
     struct wlr_xdg_decoration_manager_v1 *decoration_manager;
     struct wl_listener new_decoration;
     struct wl_list views; // Contains struct madway_view.link entries
+    struct wlr_scene_tree *above_windows;
     struct wl_list layout_views; // Stable tiling order, independent of focus/stacking
     unsigned active_workspace;
     struct madway_view *focused_view;
@@ -79,6 +82,9 @@ struct madway_server
     bool interactive_forward_button;
     double interactive_x, interactive_y;
     struct wlr_box interactive_geometry;
+    unsigned interactive_neighbor_id;
+    int interactive_master_percent, interactive_pair_height;
+    double interactive_weight_total;
     double grab_origin_x, grab_origin_y;
     bool input_initialized;
     bool shutting_down;
@@ -101,6 +107,7 @@ struct madway_output
     struct wlr_box usable_area;
     int layout_x, layout_y;
     bool positioned;
+    int master_percent; // Zero uses the configured default; drags override this output.
     struct wl_list link;
     struct wl_listener frame;
     struct wl_listener request_state;

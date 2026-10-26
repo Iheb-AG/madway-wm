@@ -101,7 +101,8 @@ static struct madway_view *view_at(struct madway_server *server, double x, doubl
 {
     *surface = NULL;
     if (madway_layer_at(server, true, x, y, surface, sx, sy) != NULL) return NULL;
-    struct wlr_scene_node *node = wlr_scene_node_at(&server->windows->node, x, y, sx, sy);
+    struct wlr_scene_node *node = wlr_scene_node_at(&server->above_windows->node, x, y, sx, sy);
+    if (node == NULL) node = wlr_scene_node_at(&server->windows->node, x, y, sx, sy);
     if (node == NULL)
     {
         madway_layer_at(server, false, x, y, surface, sx, sy);
@@ -194,6 +195,20 @@ void madway_cancel_pointer_grab(struct madway_server *server)
     wlr_seat_pointer_clear_focus(server->seat);
 }
 
+static void focus_pointer_window(struct madway_server *server)
+{
+    if (!server->config.focus_follows_mouse || server->switcher_active || server->keyboard_layer != NULL ||
+        server->interactive_view != NULL || server->seat->pointer_state.button_count > 0) return;
+    struct wlr_surface *surface;
+    double sx, sy;
+    struct madway_view *view = view_at(server, server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+    if (view != NULL && view != server->focused_view)
+    {
+        madway_focus_view(server, view);
+        madway_rebase_cursor(server);
+    }
+}
+
 static void handle_cursor_motion(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, cursor_motion);
@@ -202,6 +217,7 @@ static void handle_cursor_motion(struct wl_listener *listener, void *data)
         pointer_output(server, event->pointer) == NULL) return;
     wlr_cursor_move(server->cursor, &event->pointer->base, event->delta_x, event->delta_y);
     process_cursor_motion(server, event->time_msec);
+    focus_pointer_window(server);
 }
 
 static void handle_cursor_motion_absolute(struct wl_listener *listener, void *data)
@@ -213,6 +229,7 @@ static void handle_cursor_motion_absolute(struct wl_listener *listener, void *da
         pointer_output(server, event->pointer) == NULL) return;
     wlr_cursor_warp_absolute(server->cursor, &event->pointer->base, event->x, event->y);
     process_cursor_motion(server, event->time_msec);
+    focus_pointer_window(server);
 }
 
 static void handle_cursor_button(struct wl_listener *listener, void *data)
@@ -318,6 +335,11 @@ static void handle_cursor_button(struct wl_listener *listener, void *data)
             bool resize = (event->button == BTN_LEFT && edges != 0) || (alt && event->button == BTN_RIGHT);
             if (move || resize)
             {
+                if (alt && event->button == BTN_RIGHT && !view->floating) {
+                    bool master = view->output != NULL && view->tile_geometry.x == view->output->usable_area.x;
+                    edges = master ? WLR_EDGE_RIGHT : WLR_EDGE_LEFT |
+                        (server->cursor->y < view->tile_geometry.y + view->tile_geometry.height / 2.0 ? WLR_EDGE_TOP : WLR_EDGE_BOTTOM);
+                }
                 if (edges == 0) edges = WLR_EDGE_BOTTOM | WLR_EDGE_RIGHT;
                 madway_begin_interactive(view, resize ? MADWAY_RESIZE : MADWAY_MOVE, edges);
                 server->interactive_button = event->button;
@@ -384,6 +406,9 @@ static void handle_keyboard_modifiers(struct wl_listener *listener, void *data)
     struct madway_keyboard *keyboard = wl_container_of(listener, keyboard, modifiers);
     wlr_seat_set_keyboard(keyboard->server->seat, keyboard->keyboard);
     wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &keyboard->keyboard->modifiers);
+    uint32_t modifier = keyboard->server->config.use_super ? WLR_MODIFIER_LOGO : WLR_MODIFIER_ALT;
+    if (!(wlr_keyboard_get_modifiers(keyboard->keyboard) & modifier))
+        madway_switcher_finish(keyboard->server, false);
 }
 
 static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_key_event *event,
@@ -393,6 +418,15 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
     {
         wlr_session_change_vt(server->session, symbol - XKB_KEY_XF86Switch_VT_1 + 1);
         return true;
+    }
+    if (server->switcher_active && symbol == XKB_KEY_Escape)
+    { madway_switcher_finish(server, true); return true; }
+    if ((modifiers & (WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT)) == (WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT) &&
+        !(modifiers & (WLR_MODIFIER_ALT | WLR_MODIFIER_LOGO)))
+    {
+        const char *direction = symbol == XKB_KEY_Left ? "left" : symbol == XKB_KEY_Right ? "right" :
+            symbol == XKB_KEY_Up ? "up" : symbol == XKB_KEY_Down ? "down" : NULL;
+        if (direction != NULL) { madway_move_tile(server, direction); return true; }
     }
     switch (symbol)
     {
@@ -435,6 +469,9 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
     case XKB_KEY_f:
         if (view != NULL) madway_set_fullscreen(view, !view->fullscreen);
         return true;
+    case XKB_KEY_a:
+        if (view != NULL) madway_set_keep_above(view, !view->keep_above);
+        return true;
     case XKB_KEY_m:
         if (view != NULL) madway_set_maximized(view, !view->maximized);
         return true;
@@ -444,7 +481,7 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
         return true;
     case XKB_KEY_Tab:
     case XKB_KEY_ISO_Left_Tab:
-        madway_cycle_focus(server, (modifiers & WLR_MODIFIER_SHIFT) != 0);
+        madway_switcher_step(server, (modifiers & WLR_MODIFIER_SHIFT) != 0);
         return true;
     case XKB_KEY_q:
         if (view != NULL) wlr_xdg_toplevel_send_close(view->toplevel);

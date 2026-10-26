@@ -17,10 +17,10 @@ with tempfile.TemporaryDirectory(prefix='madway-installer-test-') as tmp:
     assert result.returncode==2 and not stage.exists()
     subprocess.run(args,check=True,stdout=subprocess.DEVNULL)
     binaries=stage/'usr/local/bin'
-    for name in ('madway','madway-session','madway-shell','madway-panel'):
+    for name in ('madway','madway-session','madway-shell','madway-panel','madway-script'):
         assert os.access(binaries/name,os.X_OK)
     entry=stage/'usr/share/wayland-sessions/madway.desktop'
-    assert 'Exec="/usr/local/bin/madway-session" --native' in entry.read_text()
+    assert 'Exec=/usr/local/bin/madway-session --native' in entry.read_text()
     assert not any(path.suffix in ('.ogg','.mp3','.wav','.jpg','.flp') for path in stage.rglob('*'))
     if shutil.which('desktop-file-validate'):
         subprocess.run(['desktop-file-validate',str(entry)],check=True)
@@ -47,4 +47,26 @@ print(json.dumps(dict(environment={name:os.environ.get(name) for name in names},
     data=json.loads(subprocess.check_output([str(fake/'madway-session'),'--version'],env=env,text=True))
     assert data['environment']['MADWAY_NATIVE'] is None
     assert data['environment']['WAYLAND_DISPLAY']=='host-display'
+    # Match Plasma Login's installed wayland-session script: exec $@.
+    # It receives the complete Exec field as one argument, without shell eval.
+    command=next(line[5:] for line in entry.read_text().splitlines() if line.startswith('Exec='))
+    command=command.replace('/usr/local/bin',str(fake))+' --version'
+    invoke=['/bin/sh','-c','exec $@','login-session']
+    data=json.loads(subprocess.check_output([*invoke,command],env=env,text=True))
+    assert data['environment']['MADWAY_NATIVE']=='1' and data['arguments']==['--version']
+    broken='"'+str(fake/'madway-session')+'" --native --version'
+    failure=subprocess.run([*invoke,broken],env=env,capture_output=True,text=True)
+    assert failure.returncode==127, failure
+    # Use only a fake compositor: this tests persistent logs without DRM/VT access.
+    native_env={**env,'XDG_STATE_HOME':str(root/'state')}
+    subprocess.run([str(fake/'madway-session'),'--native'],env=native_env,check=True)
+    log=root/'state/madway/session.log'
+    assert 'madway native session:' in log.read_text()
+    assert '"MADWAY_NATIVE": "1"' in log.read_text()
+    assert log.stat().st_mode & 0o077 == 0
+    subprocess.run([str(fake/'madway-session'),'--native'],env=native_env,check=True)
+    assert (log.parent/'session.previous.log').exists()
+    invalid=subprocess.run([*args,'--dry-run','--prefix','/tmp/madway prefix'],capture_output=True,text=True)
+    assert invalid.returncode==2
+    print('PASS: login-manager Exec compatibility, quoted-path failure reproduced, and private native log rotation.')
 print('PASS: dry run, staged native-session installation, no personal assets, and native/nested launcher environment separation.')

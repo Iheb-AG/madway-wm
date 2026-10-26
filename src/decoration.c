@@ -46,7 +46,7 @@ static const struct wlr_buffer_impl title_impl = {
 int madway_frame_title_height(struct madway_view *view)
 {
     int height = view->server->config.title_height;
-    return view->compact_frame && height > 16 ? 16 : height;
+    return view->compact_frame && height > 14 ? 14 : height;
 }
 
 static struct wlr_buffer *draw_title(struct madway_view *view, int width)
@@ -63,14 +63,15 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
     }
     bool active = view->server->focused_view == view;
     cairo_t *cr = cairo_create(pixels->surface);
-    if (active) cairo_set_source_rgb(cr, 0xd9 / 255., 0x77 / 255., 0x06 / 255.);
-    else cairo_set_source_rgb(cr, 0x1c / 255., 0x1f / 255., 0x24 / 255.);
+    const float *background = active ? view->server->config.active : view->server->config.surface;
+    cairo_set_source_rgb(cr, background[0], background[1], background[2]);
     cairo_paint(cr);
-    cairo_set_source_rgb(cr, active ? .04 : .77, active ? .05 : .80, active ? .06 : .85);
+    const float *text = active ? view->server->config.text : view->server->config.muted;
+    cairo_set_source_rgb(cr, text[0], text[1], text[2]);
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
     PangoFontDescription *font = pango_font_description_from_string("monospace");
-    pango_font_description_set_absolute_size(font, 10 * PANGO_SCALE);
+    pango_font_description_set_absolute_size(font, 9 * PANGO_SCALE);
     pango_layout_set_font_description(layout, font);
     pango_layout_set_single_paragraph_mode(layout, true);
     pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
@@ -107,8 +108,8 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
 
 bool madway_frame_create(struct madway_view *view)
 {
-    const float highlight[4] = {0x3a / 255.f, 0x3f / 255.f, 0x4b / 255.f, 1};
-    const float shadow[4] = {0x0b / 255.f, 0x0d / 255.f, 0x10 / 255.f, 1};
+    const float *highlight = view->server->config.border;
+    const float shadow[4] = {0, 0, 0, 1};
     for (int i = 0; i < 4; ++i)
     {
         view->borders[i] = wlr_scene_rect_create(view->scene_tree, 0, 0, i < 2 ? highlight : shadow);
@@ -149,11 +150,11 @@ void madway_frame_update(struct madway_view *view)
         view->frame_active == active && view->frame_title != NULL && !strcmp(view->frame_title, title))
         return;
 
-    const float highlight[4] = {0x3a / 255.f, 0x3f / 255.f, 0x4b / 255.f, 1};
-    const float shadow[4] = {0x0b / 255.f, 0x0d / 255.f, 0x10 / 255.f, 1};
-    const float amber[4] = {0xd9 / 255.f, 0x77 / 255.f, 0x06 / 255.f, 1};
+    const float *highlight = view->server->config.border;
+    const float shadow[4] = {0, 0, 0, 1};
+    const float *focus = view->server->config.accent;
     for (int i = 0; i < 4; ++i)
-        wlr_scene_rect_set_color(view->borders[i], title_height == 0 && active ? amber : i < 2 ? highlight : shadow);
+        wlr_scene_rect_set_color(view->borders[i], title_height == 0 && active ? focus : i < 2 ? highlight : shadow);
 
     wlr_scene_rect_set_size(view->borders[0], width + 2, 1);
     wlr_scene_rect_set_size(view->borders[1], 1, height + title_height + 1);
@@ -182,10 +183,10 @@ void madway_frame_update(struct madway_view *view)
 
 uint32_t madway_frame_edges(struct madway_view *view, double lx, double ly)
 {
-    if (!view->decorated || !view->floating || view->fullscreen || view->maximized) return 0;
+    if (!view->decorated || view->fullscreen || view->maximized) return 0;
     double x = lx - view->scene_tree->node.x, y = ly - view->scene_tree->node.y;
     int width = view->toplevel->base->geometry.width + 2;
-    int height = view->toplevel->base->geometry.height + madway_frame_title_height(view) + 2;
+    int height = view->toplevel->base->geometry.height + (view->floating ? madway_frame_title_height(view) : 0) + 2;
     if (x < 0 || y < 0 || x >= width || y >= height) return 0;
     return (x < 1 ? WLR_EDGE_LEFT : x >= width - 1 ? WLR_EDGE_RIGHT : 0) |
         (y < 1 ? WLR_EDGE_TOP : y >= height - 1 ? WLR_EDGE_BOTTOM : 0);

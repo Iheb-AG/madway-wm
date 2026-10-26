@@ -19,9 +19,12 @@ void madway_focus_view(struct madway_server *server, struct madway_view *view)
     {
         return;
     }
-    if (server->focused_view != NULL && server->focused_view != view && view != NULL &&
-        server->focused_view->fullscreen && server->focused_view->output == view->output)
-        madway_set_fullscreen(server->focused_view, false);
+    if (view != NULL && !view->keep_above) {
+        struct madway_view *entry;
+        wl_list_for_each(entry, &server->views, link)
+            if (entry != view && madway_view_visible(entry) && entry->fullscreen && entry->output == view->output)
+                madway_set_fullscreen(entry, false);
+    }
     if (server->focused_view != NULL && server->focused_view != view &&
         server->focused_view->toplevel->base->initialized)
     {
@@ -167,7 +170,8 @@ static void handle_view_unmap(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, unmap);
     view->mapped = false;
-    if (view->server->interactive_view == view) madway_end_interactive(view->server);
+    if (view->server->interactive_view == view || view->server->interactive_neighbor_id == view->id)
+        madway_end_interactive(view->server);
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);
     focus_after_view_removal(view);
     madway_rebase_cursor(view->server);
@@ -179,7 +183,8 @@ static void handle_view_destroy(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, destroy);
     view->mapped = false;
-    if (view->server->interactive_view == view) madway_end_interactive(view->server);
+    if (view->server->interactive_view == view || view->server->interactive_neighbor_id == view->id)
+        madway_end_interactive(view->server);
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);
     focus_after_view_removal(view);
     wl_list_remove(&view->commit.link);
@@ -287,6 +292,8 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data)
         wl_client_post_no_memory(toplevel->base->client->client);
         return;
     }
+    view->id = ++server->next_view_id;
+    view->tile_weight = 1;
     view->scene_tree->node.data = view;
     toplevel->base->data = view->content_tree; // Popup scene nodes use their parent's content tree.
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);

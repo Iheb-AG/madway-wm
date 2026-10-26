@@ -6,6 +6,7 @@
 #include "input.h"
 #include "monitors.h"
 #include "window.h"
+#include "theme.h"
 #include <glib/gstdio.h>
 
 #include <errno.h>
@@ -67,14 +68,15 @@ void madway_launch_kitty(struct madway_server *server)
 
 void madway_session_reload(struct madway_server *server)
 {
+    int previous_master = server->config.master_percent;
     GKeyFile *file = g_key_file_new();
     char *path = g_build_filename(g_get_user_config_dir(), "madway", "settings.ini", NULL);
-    server->config = (struct madway_config){.title_height = 16, .tile_gap = 2,
+    server->config = (struct madway_config){.title_height = 14, .tile_gap = 1,
         .master_percent = 50, .repeat_rate = 25, .repeat_delay = 600, .default_floating = true};
     if (g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
     {
         if (g_key_file_has_key(file, "appearance", "title_height", NULL))
-            server->config.title_height = CLAMP(g_key_file_get_integer(file, "appearance", "title_height", NULL), 14, 24);
+            server->config.title_height = CLAMP(g_key_file_get_integer(file, "appearance", "title_height", NULL), 12, 24);
         if (g_key_file_has_key(file, "appearance", "tile_gap", NULL))
             server->config.tile_gap = CLAMP(g_key_file_get_integer(file, "appearance", "tile_gap", NULL), 0, 12);
         if (g_key_file_has_key(file, "windows", "default_mode", NULL))
@@ -89,12 +91,20 @@ void madway_session_reload(struct madway_server *server)
             server->config.repeat_rate = CLAMP(g_key_file_get_integer(file, "input", "repeat_rate", NULL), 1, 100);
         if (g_key_file_has_key(file, "input", "repeat_delay", NULL))
             server->config.repeat_delay = CLAMP(g_key_file_get_integer(file, "input", "repeat_delay", NULL), 100, 1500);
+        server->config.focus_follows_mouse = g_key_file_get_boolean(file, "input", "focus_follows_mouse", NULL);
         char *modifier = g_key_file_get_string(file, "input", "modifier", NULL);
         server->config.use_super = g_strcmp0(modifier, "super") == 0;
         g_free(modifier);
     }
+    char *theme = g_key_file_get_string(file, "appearance", "theme", NULL);
+    madway_theme_load(&server->config, theme);
+    g_free(theme);
     g_key_file_unref(file);
     g_free(path);
+    if (previous_master != server->config.master_percent) {
+        struct madway_output *output;
+        wl_list_for_each(output, &server->outputs, link) output->master_percent = 0;
+    }
     madway_reload_input(server);
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
@@ -185,9 +195,24 @@ static int handle_control(int fd, uint32_t mask, void *data)
     while ((length = recv(fd, command, sizeof(command) - 1, 0)) > 0)
     {
         command[length] = '\0';
-        unsigned workspace;
+        unsigned workspace, identity;
         if (sscanf(command, "workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
             madway_workspace_switch(server, workspace);
+        else if (sscanf(command, "move-workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
+        {
+            if (server->focused_view != NULL) madway_workspace_move_view(server->focused_view, workspace);
+        }
+        else if (sscanf(command, "focus %u", &identity) == 1)
+        {
+            struct madway_view *target;
+            wl_list_for_each(target, &server->layout_views, layout_link)
+                if (target->id == identity && madway_view_visible(target))
+                { madway_focus_view(server, target); break; }
+            server->switcher_active = false;
+            madway_session_publish_state(server);
+        }
+        else if (g_str_has_prefix(command, "tile "))
+            madway_move_tile(server, command + 5);
         else if (strcmp(command, "focus-settings") == 0)
         {
             struct madway_view *view;
@@ -195,6 +220,8 @@ static int handle_control(int fd, uint32_t mask, void *data)
                 if (view->mapped && g_strcmp0(view->toplevel->app_id, "org.madway.Settings") == 0)
                 { madway_workspace_switch(server, view->workspace); madway_focus_view(server, view); break; }
         }
+        else if (strcmp(command, "above") == 0 && server->focused_view != NULL)
+            madway_set_keep_above(server->focused_view, !server->focused_view->keep_above);
         else if (strcmp(command, "floating") == 0 && server->focused_view != NULL)
             madway_toggle_floating(server->focused_view);
         else if (strcmp(command, "maximize") == 0 && server->focused_view != NULL)
@@ -252,7 +279,22 @@ void madway_session_publish_state(struct madway_server *server)
     g_string_append_printf(text, "{\"workspace\":%u,\"title\":", server->active_workspace);
     struct madway_view *view = server->focused_view;
     append_json_string(text, view != NULL && madway_view_visible(view) ? view->toplevel->title : "");
-    g_string_append(text, "}\n");
+    g_string_append_printf(text, ",\"has_window\":%s,\"switcher\":%s,\"windows\":[",
+            view != NULL && madway_view_visible(view) ? "true" : "false", server->switcher_active ? "true" : "false");
+    bool first = true;
+    struct madway_view *entry;
+    wl_list_for_each(entry, &server->layout_views, layout_link)
+        if (madway_view_visible(entry))
+        {
+            g_string_append_printf(text, "%s{\"id\":%u,\"focused\":%s,\"title\":", first ? "" : ",", entry->id,
+                    entry == server->focused_view ? "true" : "false");
+            append_json_string(text, entry->toplevel->title);
+            g_string_append(text, "}");first = false;
+        }
+    g_string_append_printf(text, "],\"keep_above\":%s,\"output_x\":%d,\"output_y\":%d}\n",
+            view != NULL && view->keep_above ? "true" : "false",
+            view != NULL && view->output != NULL ? view->output->layout_x : 0,
+            view != NULL && view->output != NULL ? view->output->layout_y : 0);
     char *path = session_path(server, "desktop.json");
     g_file_set_contents(path, text->str, (gssize)text->len, NULL);
     g_free(path); g_string_free(text, true);
