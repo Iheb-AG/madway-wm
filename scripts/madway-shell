@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Madway desktop services and settings. External commands always use argv lists."""
+
+import argparse
+import configparser
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+
+SHARE = Path(__file__).resolve().parent.parent / "share" / "madway"
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "madway" / "settings.ini"
+DEFAULTS = {
+    "appearance": {"title_height": "18", "tile_gap": "2"},
+    "wallpaper": {"path": "", "mode": "fill", "color": "#121418"},
+    "notifications": {"enabled": "true"},
+    "sounds": {"enabled": "false", "volume": "0.25", "startup": "", "logout": "", "shutdown": ""},
+}
+
+
+def settings():
+    config = configparser.ConfigParser(interpolation=None)
+    config.read_dict(DEFAULTS)
+    config.read(CONFIG)
+    return config
+
+
+def runtime_directory():
+    display = os.environ.get("WAYLAND_DISPLAY", "")
+    if not display or "/" in display:
+        raise RuntimeError("WAYLAND_DISPLAY must name a running madway socket")
+    return Path(os.environ["XDG_RUNTIME_DIR"]) / ("madway-" + display)
+
+
+def action(name, **values):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+        channel.sendto(json.dumps({"action": name, **values}).encode(), str(runtime_directory() / "control.sock"))
+
+
+def run(arguments):
+    result = subprocess.run(arguments, capture_output=True, text=True, timeout=4)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"{arguments[0]} failed")
+    return result.stdout.strip()
+
+
+def volume():
+    text = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
+    match = re.search(r"Volume:\s*([0-9.]+)", text)
+    if not match:
+        raise RuntimeError("No default audio output")
+    return round(float(match[1]) * 100), "MUTED" in text
+
+
+def backlight():
+    devices = sorted(Path("/sys/class/backlight").glob("*"))
+    if not devices:
+        return None
+    device = devices[0]
+    return device, int((device / "brightness").read_text()), int((device / "max_brightness").read_text())
+
+
+def brightness():
+    if shutil.which("brightnessctl"):
+        current = int(run(["brightnessctl", "get"]))
+        maximum = int(run(["brightnessctl", "max"]))
+    else:
+        hardware = backlight()
+        if hardware is None:
+            return None
+        _, current, maximum = hardware
+    return round(100 * current / maximum) if maximum else None
+
+
+def set_brightness(percent):
+    percent = min(100, max(1, int(percent)))
+    if shutil.which("brightnessctl"):
+        run(["brightnessctl", "set", f"{percent}%"])
+        return
+    hardware = backlight()
+    if hardware is None:
+        raise RuntimeError("No backlight device available")
+    device, _, maximum = hardware
+    value = max(1, round(maximum * percent / 100))
+    # logind checks the caller's session/device access; no sudo or permission changes.
+    run(["busctl", "--system", "call", "org.freedesktop.login1",
+         "/org/freedesktop/login1/session/auto", "org.freedesktop.login1.Session",
+         "SetBrightness", "ssu", "backlight", device.name, str(value)])
+
+
+class Desktop:
+    def __init__(self, compositor_pid):
+        import gi
+        from gi.repository import Gio, GLib, GLibUnix
+        self.Gio, self.GLib = Gio, GLib
+        self.parent = compositor_pid
+        self.directory = runtime_directory()
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.channel = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.socket_path = self.directory / "control.sock"
+        if self.socket_path.exists():
+            raise RuntimeError("A desktop helper already owns this display")
+        self.channel.bind(str(self.socket_path))
+        self.channel.setblocking(False)
+        self.loop = GLib.MainLoop()
+        self.children = {}
+        self.ids = {}
+        self.exit_event = "logout"
+        self.shutdown_played = False
+        self.config = settings()
+        GLib.io_add_watch(self.channel.fileno(), GLib.IO_IN, self.receive)
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self.stop)
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self.stop)
+        GLib.timeout_add_seconds(1, self.reap)
+        try:
+            self.system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self.system_bus.signal_subscribe("org.freedesktop.login1", "org.freedesktop.login1.Manager",
+                "PrepareForShutdown", "/org/freedesktop/login1", None, Gio.DBusSignalFlags.NONE,
+                self.prepare_shutdown)
+        except GLib.Error:
+            self.system_bus = None
+
+    def spawn(self, key, arguments):
+        existing = self.children.get(key)
+        if existing is not None and existing.poll() is None:
+            return existing
+        try:
+            process = subprocess.Popen(arguments)
+        except FileNotFoundError:
+            print(f"madway: optional desktop program missing: {arguments[0]}", file=sys.stderr)
+            return None
+        self.children[key] = process
+        return process
+
+    def terminate(self, key):
+        process = self.children.pop(key, None)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+    def reap(self):
+        for key, process in list(self.children.items()):
+            if process.poll() is not None:
+                if process.returncode:
+                    print(f"madway: {key} exited with status {process.returncode}", file=sys.stderr)
+                del self.children[key]
+        return True
+
+    def sound(self, event, wait=False):
+        if not self.config.getboolean("sounds", "enabled"):
+            return
+        configured = self.config.get("sounds", event).strip()
+        if not configured:
+            return
+        path = Path(configured).expanduser()
+        if not path.is_file():
+            return
+        gain = min(1, max(0, self.config.getfloat("sounds", "volume")))
+        if shutil.which("pw-play"):
+            arguments = ["pw-play", "--volume", str(gain), str(path)]
+        elif shutil.which("paplay"):
+            arguments = ["paplay", "--volume", str(round(gain * 65536)), str(path)]
+        else:
+            return
+        process = self.spawn("sound-" + event, arguments)
+        if wait and process is not None:
+            try:
+                process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self.terminate("sound-" + event)
+
+    def notify(self, key, title, body="", value=None):
+        if not self.config.getboolean("notifications", "enabled"):
+            return
+        arguments = ["notify-send", "--app-name=madway", "--print-id", "--expire-time=1500",
+                     "--hint=boolean:transient:true"]
+        if key in self.ids:
+            arguments += ["--replace-id", self.ids[key]]
+        if value is not None:
+            arguments += ["--hint", f"int:value:{min(100, max(0, int(value)))}"]
+        try:
+            self.ids[key] = run([*arguments, title, body]).strip()
+        except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as error:
+            print(f"madway: notification unavailable: {error}", file=sys.stderr)
+
+    def wallpaper(self):
+        image = self.config.get("wallpaper", "path").strip()
+        color = self.config.get("wallpaper", "color")
+        mode = self.config.get("wallpaper", "mode")
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise RuntimeError("Wallpaper color must be #RRGGBB")
+        if mode not in {"fill", "fit", "center", "stretch", "tile"}:
+            raise RuntimeError("Unknown wallpaper mode")
+        arguments = ["swaybg", "-c", color[1:]]
+        if image:
+            path = Path(image).expanduser()
+            if not path.is_file():
+                raise RuntimeError("Wallpaper image does not exist")
+            arguments += ["-i", str(path), "-m", mode]
+        self.terminate("wallpaper")
+        self.spawn("wallpaper", arguments)
+
+    def apply(self):
+        self.config = settings()
+        self.wallpaper()
+        if self.config.getboolean("notifications", "enabled"):
+            self.spawn("notifications", ["mako", "--config", str(SHARE / "mako.conf")])
+        else:
+            self.terminate("notifications")
+        os.kill(self.parent, signal.SIGHUP)
+
+    def launcher(self, mode):
+        existing = self.children.get("launcher")
+        if existing is not None and existing.poll() is None:
+            self.terminate("launcher")
+            return
+        self.spawn("launcher", ["wofi", "--show", mode, "--conf", str(SHARE / "wofi.conf"),
+                   "--style", str(SHARE / "wofi.css"), "--term", "kitty", "--prompt",
+                   "Applications" if mode == "drun" else "Run command or script"])
+
+    def perform(self, message):
+        name = message.get("action")
+        if name in {"launcher", "run"}:
+            self.launcher("drun" if name == "launcher" else "run")
+        elif name == "settings":
+            self.spawn("settings", [sys.executable, str(Path(__file__).resolve()), "settings"])
+        elif name == "apply":
+            self.apply()
+            self.notify("settings", "Settings applied")
+        elif name in {"volume-up", "volume-down", "volume-mute", "set-volume"}:
+            if name == "volume-mute":
+                run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+            elif name == "set-volume":
+                value = min(100, max(0, int(message["value"])))
+                run(["wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", f"{value}%"])
+            else:
+                run(["wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+" if name == "volume-up" else "5%-"])
+            value, muted = volume()
+            self.notify("volume", "Volume muted" if muted else f"Volume {value}%", value=value)
+        elif name in {"brightness-up", "brightness-down", "set-brightness"}:
+            current = brightness()
+            if current is None:
+                raise RuntimeError("No backlight device available")
+            value = int(message["value"]) if name == "set-brightness" else current + (5 if name == "brightness-up" else -5)
+            set_brightness(value)
+            value = brightness()
+            self.notify("brightness", f"Brightness {value}%", value=value)
+        elif name in {"startup-sound", "logout-sound", "shutdown-sound"}:
+            event = name.removesuffix("-sound")
+            if not self.config.getboolean("sounds", "enabled"):
+                raise RuntimeError("Enable Session sounds in settings first")
+            configured = self.config.get("sounds", event).strip()
+            if not configured or not Path(configured).expanduser().is_file():
+                raise RuntimeError(f"Choose an existing {event} sound file in settings")
+            self.sound(event)
+        elif name == "logout":
+            os.kill(self.parent, signal.SIGTERM)
+        elif name == "poweroff":
+            self.sound("shutdown", wait=True)
+            self.shutdown_played = True
+            try:
+                run(["systemctl", "poweroff"])
+            except Exception:
+                self.shutdown_played = False
+                raise
+        else:
+            raise RuntimeError("Unknown desktop action")
+
+    def receive(self, source, condition):
+        del source, condition
+        try:
+            payload = json.loads(self.channel.recv(8192))
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid action")
+            self.perform(payload)
+        except Exception as error:
+            print(f"madway: desktop action failed: {error}", file=sys.stderr)
+            self.notify("error", "Desktop action unavailable", str(error))
+        return True
+
+    def prepare_shutdown(self, connection, sender, path, interface, member, parameters):
+        del connection, sender, path, interface, member
+        if parameters.unpack()[0]:
+            self.exit_event = "shutdown"
+            if not self.shutdown_played:
+                self.sound("shutdown")
+                self.shutdown_played = True
+
+    def stop(self):
+        self.loop.quit()
+        return False
+
+    def serve(self):
+        # User scripts placed here become available in the run launcher.
+        os.environ["PATH"] = str(Path.home() / ".local" / "bin") + ":" + os.environ.get("PATH", "")
+        os.environ.setdefault("GIO_USE_VFS", "local")
+        try:
+            self.apply()
+            self.sound("startup")
+            print(f"madway: desktop services ready on {self.socket_path}", flush=True)
+            self.loop.run()
+        finally:
+            if not self.shutdown_played:
+                self.sound(self.exit_event, wait=True)
+            for key in list(self.children):
+                self.terminate(key)
+            self.channel.close()
+            self.socket_path.unlink(missing_ok=True)
+            try:
+                self.directory.rmdir()
+            except OSError:
+                pass
+
+
+def settings_window():
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, Gdk, GLib
+    GLib.set_prgname("org.madway.Settings")
+    config = settings()
+    window = Gtk.Window(title="madway — Settings")
+    window.set_default_size(520, 560)
+    window.connect("destroy", Gtk.main_quit)
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"* { font-family: monospace; font-size: 12px; border-radius: 0; } window { background: #121418; color: #d2d6df; } button, entry, spinbutton, combobox { background: #1c1f24; color: #d2d6df; border: 1px solid #3a3f4b; } button:hover { border-color: #d97706; }")
+    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=14)
+    window.add(box)
+    grid = Gtk.Grid(column_spacing=12, row_spacing=9)
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scroll.add(grid)
+    box.pack_start(scroll, True, True, 0)
+    row = 0
+
+    def field(label, widget):
+        nonlocal row
+        grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+        widget.set_hexpand(True)
+        grid.attach(widget, 1, row, 1, 1)
+        row += 1
+        return widget
+
+    title = field("Floating title height", Gtk.SpinButton.new_with_range(14, 24, 1))
+    title.set_value(config.getint("appearance", "title_height"))
+    gap = field("Tile gap", Gtk.SpinButton.new_with_range(0, 12, 1))
+    gap.set_value(config.getint("appearance", "tile_gap"))
+    image = field("Wallpaper file", Gtk.Entry(text=config.get("wallpaper", "path")))
+    browse = Gtk.Button(label="Choose wallpaper…")
+    def choose_image(button):
+        del button
+        dialog = Gtk.FileChooserDialog(title="Choose wallpaper", transient_for=window,
+                action=Gtk.FileChooserAction.OPEN)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK)
+        if dialog.run() == Gtk.ResponseType.OK:
+            image.set_text(dialog.get_filename())
+        dialog.destroy()
+    browse.connect("clicked", choose_image)
+    field("", browse)
+    mode = Gtk.ComboBoxText()
+    for item in ["fill", "fit", "center", "stretch", "tile"]:
+        mode.append(item, item)
+    mode.set_active_id(config.get("wallpaper", "mode"))
+    field("Wallpaper fit", mode)
+    color = field("Background color", Gtk.Entry(text=config.get("wallpaper", "color")))
+    notifications = field("Notifications / indicators", Gtk.Switch())
+    notifications.set_active(config.getboolean("notifications", "enabled"))
+    sounds = field("Session sounds", Gtk.Switch())
+    sounds.set_active(config.getboolean("sounds", "enabled"))
+    sound_paths = {}
+    for event in ("startup", "logout", "shutdown"):
+        controls = Gtk.Box(spacing=6)
+        entry = Gtk.Entry(text=config.get("sounds", event))
+        entry.set_width_chars(18)
+        entry.set_placeholder_text("Choose a local audio file")
+        controls.pack_start(entry, True, True, 0)
+        browse_sound = Gtk.Button(label="Browse…")
+        def choose_sound(button, entry=entry, event=event):
+            del button
+            dialog = Gtk.FileChooserDialog(title=f"Choose {event} sound", transient_for=window,
+                    action=Gtk.FileChooserAction.OPEN)
+            dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK)
+            if dialog.run() == Gtk.ResponseType.OK:
+                entry.set_text(dialog.get_filename())
+            dialog.destroy()
+        browse_sound.connect("clicked", choose_sound)
+        controls.pack_end(browse_sound, False, False, 0)
+        field(event.capitalize() + " sound", controls)
+        sound_paths[event] = entry
+    sound_volume = field("Sound level", Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5))
+    sound_volume.set_value(config.getfloat("sounds", "volume") * 100)
+
+    def hardware_slider(label, getter, name):
+        slider = field(label, Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0 if name == "set-volume" else 1, 100, 1))
+        try:
+            current = getter()
+            if current is None:
+                slider.set_sensitive(False)
+                slider.set_tooltip_text("No backlight device available")
+            else:
+                slider.set_value(current)
+        except Exception:
+            slider.set_sensitive(False)
+        slider.connect("button-release-event", lambda widget, event: send(name, value=round(widget.get_value())))
+        slider.connect("key-release-event", lambda widget, event: send(name, value=round(widget.get_value())))
+    status = Gtk.Label(xalign=0, wrap=True)
+    def send(name, **values):
+        try:
+            action(name, **values)
+            status.set_text("")
+        except Exception as error:
+            status.set_text(str(error))
+        return False
+    hardware_slider("Output volume", lambda: volume()[0], "set-volume")
+    hardware_slider("Display brightness", brightness, "set-brightness")
+    box.pack_start(status, False, False, 0)
+    buttons = Gtk.Box(spacing=8)
+    box.pack_end(buttons, False, False, 0)
+    apply_button = Gtk.Button(label="Apply")
+    def save(button):
+        del button
+        try:
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}", color.get_text()):
+                raise ValueError("Use a background color such as #121418")
+            if image.get_text() and not Path(image.get_text()).expanduser().is_file():
+                raise ValueError("Wallpaper image does not exist")
+            paths = {event: entry.get_text().strip() for event, entry in sound_paths.items()}
+            for event, path in paths.items():
+                if path and not Path(path).expanduser().is_file():
+                    raise ValueError(f"The {event} sound file does not exist")
+            if sounds.get_active() and not any(paths.values()):
+                raise ValueError("Choose a sound file before enabling Session sounds")
+            config["appearance"].update(title_height=str(title.get_value_as_int()), tile_gap=str(gap.get_value_as_int()))
+            config["wallpaper"].update(path=image.get_text(), mode=mode.get_active_id(), color=color.get_text())
+            config["notifications"]["enabled"] = str(notifications.get_active()).lower()
+            config["sounds"].update(enabled=str(sounds.get_active()).lower(), volume=str(sound_volume.get_value() / 100))
+            config["sounds"].update(paths)
+            CONFIG.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", dir=CONFIG.parent, delete=False) as temporary:
+                config.write(temporary)
+                temporary_path = Path(temporary.name)
+            temporary_path.replace(CONFIG)
+            action("apply")
+            status.set_text("Settings saved and applied")
+            return True
+        except Exception as error:
+            status.set_text(str(error))
+            return False
+    apply_button.connect("clicked", save)
+    buttons.pack_end(apply_button, False, False, 0)
+    close = Gtk.Button(label="Close")
+    close.connect("clicked", lambda button: window.destroy())
+    buttons.pack_end(close, False, False, 0)
+    actions = Gtk.Box(spacing=8)
+    box.pack_end(actions, False, False, 0)
+    def preview_sound(button):
+        if save(button):
+            send("startup-sound")
+    for label, command in [("Apps", "launcher"), ("Run…", "run"), ("Sound test", "startup-sound"), ("Log out", "logout")]:
+        button = Gtk.Button(label=label)
+        if command == "startup-sound":
+            button.set_tooltip_text("Save settings and preview the startup sound")
+            button.connect("clicked", preview_sound)
+        else:
+            button.connect("clicked", lambda button, name=command: send(name))
+        actions.pack_start(button, False, False, 0)
+    power = Gtk.Button(label="Shut down…")
+    def shutdown(button):
+        del button
+        dialog = Gtk.MessageDialog(transient_for=window, modal=True, message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.OK_CANCEL, text="Shut down this computer?")
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.OK:
+            send("poweroff")
+    power.connect("clicked", shutdown)
+    actions.pack_start(power, False, False, 0)
+    window.show_all()
+    Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["serve", "settings", "action", "doctor"])
+    parser.add_argument("name", nargs="?")
+    parser.add_argument("--compositor-pid", type=int)
+    parser.add_argument("--value", type=int)
+    arguments = parser.parse_args()
+    if arguments.command == "serve":
+        if not arguments.compositor_pid:
+            parser.error("serve requires --compositor-pid")
+        Desktop(arguments.compositor_pid).serve()
+    elif arguments.command == "settings":
+        settings_window()
+    elif arguments.command == "doctor":
+        print(json.dumps({"programs": {name: shutil.which(name) for name in
+            ["mako", "wofi", "swaybg", "kitty", "wpctl", "brightnessctl", "busctl", "pw-play", "paplay"]},
+            "backlight": [path.name for path in Path("/sys/class/backlight").glob("*")],
+            "settings": str(CONFIG)}, indent=2))
+    else:
+        if not arguments.name:
+            parser.error("action requires an action name")
+        values = {"value": arguments.value} if arguments.value is not None else {}
+        action(arguments.name, **values)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(f"madway-shell: {error}", file=sys.stderr)
+        sys.exit(1)

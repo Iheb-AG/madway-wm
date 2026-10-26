@@ -1,0 +1,7 @@
+* { font-family: monospace; font-size: 12px; border-radius: 0; }
+window { background: #121418; color: #d2d6df; border: 1px solid #3a3f4b; }
+#input { margin: 6px; padding: 5px; background: #1c1f24; color: #d2d6df; border: 1px solid #3a3f4b; }
+#entry { padding: 4px 8px; }
+#entry:selected { background: #d97706; color: #0b0d10; }
+#text:selected { color: #0b0d10; }
+#outer-box, #inner-box { margin: 0; padding: 0; }

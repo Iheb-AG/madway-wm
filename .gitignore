@@ -25,3 +25,10 @@
 *.swp
 *.swo
 .DS_Store
+
+# Python desktop helpers
+__pycache__/
+*.pyc
+
+# Personal media assets (not distributed with madway)
+/longhorn assets/

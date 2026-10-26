@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+madway_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -x "$madway_script_dir/madway" ]; then
+    madway_binary="$madway_script_dir/madway"
+elif [ -x "$madway_script_dir/../build/madway" ]; then
+    madway_binary="$madway_script_dir/../build/madway"
+else
+    madway_binary=$(command -v madway)
+fi
+# Nested sessions get their own notification service instead of claiming the host bus.
+exec dbus-run-session -- env MADWAY_SESSION=1 "$madway_binary" "$@"
