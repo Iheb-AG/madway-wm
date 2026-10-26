@@ -3,6 +3,10 @@
 #include "view.h"
 #include "decoration.h"
 #include "workspace.h"
+#include "input.h"
+#include "monitors.h"
+#include "window.h"
+#include <glib/gstdio.h>
 
 #include <errno.h>
 #include <glib.h>
@@ -65,16 +69,33 @@ void madway_session_reload(struct madway_server *server)
 {
     GKeyFile *file = g_key_file_new();
     char *path = g_build_filename(g_get_user_config_dir(), "madway", "settings.ini", NULL);
-    server->config = (struct madway_config){18, 2};
+    server->config = (struct madway_config){.title_height = 16, .tile_gap = 2,
+        .master_percent = 50, .repeat_rate = 25, .repeat_delay = 600, .default_floating = true};
     if (g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
     {
         if (g_key_file_has_key(file, "appearance", "title_height", NULL))
             server->config.title_height = CLAMP(g_key_file_get_integer(file, "appearance", "title_height", NULL), 14, 24);
         if (g_key_file_has_key(file, "appearance", "tile_gap", NULL))
             server->config.tile_gap = CLAMP(g_key_file_get_integer(file, "appearance", "tile_gap", NULL), 0, 12);
+        if (g_key_file_has_key(file, "windows", "default_mode", NULL))
+        {
+            char *mode = g_key_file_get_string(file, "windows", "default_mode", NULL);
+            server->config.default_floating = g_strcmp0(mode, "tiled") != 0;
+            g_free(mode);
+        }
+        if (g_key_file_has_key(file, "windows", "master_percent", NULL))
+            server->config.master_percent = CLAMP(g_key_file_get_integer(file, "windows", "master_percent", NULL), 25, 75);
+        if (g_key_file_has_key(file, "input", "repeat_rate", NULL))
+            server->config.repeat_rate = CLAMP(g_key_file_get_integer(file, "input", "repeat_rate", NULL), 1, 100);
+        if (g_key_file_has_key(file, "input", "repeat_delay", NULL))
+            server->config.repeat_delay = CLAMP(g_key_file_get_integer(file, "input", "repeat_delay", NULL), 100, 1500);
+        char *modifier = g_key_file_get_string(file, "input", "modifier", NULL);
+        server->config.use_super = g_strcmp0(modifier, "super") == 0;
+        g_free(modifier);
     }
     g_key_file_unref(file);
     g_free(path);
+    madway_reload_input(server);
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
     {
@@ -82,6 +103,7 @@ void madway_session_reload(struct madway_server *server)
         madway_frame_update(view);
     }
     if (server->scene != NULL) madway_workspace_arrange(server);
+    madway_reload_outputs(server);
 }
 
 void madway_session_start(struct madway_server *server)
@@ -144,4 +166,102 @@ void madway_session_action(struct madway_server *server, const char *action)
     }
     g_free(directory);
     g_free(path);
+}
+
+static char *session_path(struct madway_server *server, const char *name)
+{
+    char *directory = g_strdup_printf("madway-%s", server->socket_name);
+    char *path = g_build_filename(g_getenv("XDG_RUNTIME_DIR"), directory, name, NULL);
+    g_free(directory);
+    return path;
+}
+
+static int handle_control(int fd, uint32_t mask, void *data)
+{
+    (void)mask;
+    struct madway_server *server = data;
+    char command[128];
+    ssize_t length;
+    while ((length = recv(fd, command, sizeof(command) - 1, 0)) > 0)
+    {
+        command[length] = '\0';
+        unsigned workspace;
+        if (sscanf(command, "workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
+            madway_workspace_switch(server, workspace);
+        else if (strcmp(command, "focus-settings") == 0)
+        {
+            struct madway_view *view;
+            wl_list_for_each(view, &server->views, link)
+                if (view->mapped && g_strcmp0(view->toplevel->app_id, "org.madway.Settings") == 0)
+                { madway_workspace_switch(server, view->workspace); madway_focus_view(server, view); break; }
+        }
+        else if (strcmp(command, "floating") == 0 && server->focused_view != NULL)
+            madway_toggle_floating(server->focused_view);
+        else if (strcmp(command, "maximize") == 0 && server->focused_view != NULL)
+            madway_set_maximized(server->focused_view, !server->focused_view->maximized);
+        else if (strcmp(command, "fullscreen") == 0 && server->focused_view != NULL)
+            madway_set_fullscreen(server->focused_view, !server->focused_view->fullscreen);
+        else if (strcmp(command, "close") == 0 && server->focused_view != NULL)
+            wlr_xdg_toplevel_send_close(server->focused_view->toplevel);
+    }
+    return 0;
+}
+
+bool madway_session_init(struct madway_server *server)
+{
+    char *directory = session_path(server, "");
+    bool ok = g_mkdir_with_parents(directory, 0700) == 0;
+    g_free(directory);
+    if (!ok) return false;
+    char *path = session_path(server, "compositor.sock");
+    struct sockaddr_un address = {.sun_family = AF_UNIX};
+    if (strlen(path) >= sizeof(address.sun_path)) { g_free(path); return false; }
+    strcpy(address.sun_path, path);
+    g_unlink(path); g_free(path);
+    server->session_control_fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (server->session_control_fd < 0 || bind(server->session_control_fd,
+            (struct sockaddr *)&address, sizeof(address)) < 0) return false;
+    server->session_control_event = wl_event_loop_add_fd(wl_display_get_event_loop(server->display),
+            server->session_control_fd, WL_EVENT_READABLE, handle_control, server);
+    return server->session_control_event != NULL;
+}
+
+void madway_session_finish(struct madway_server *server)
+{
+    if (server->session_control_event != NULL) wl_event_source_remove(server->session_control_event);
+    if (server->session_control_fd >= 0) close(server->session_control_fd);
+    if (server->socket_name == NULL) return;
+    char *path = session_path(server, "compositor.sock"); g_unlink(path); g_free(path);
+    path = session_path(server, "desktop.json"); g_unlink(path); g_free(path);
+}
+
+static void append_json_string(GString *text, const char *value)
+{
+    g_string_append_c(text, '"');
+    for (const unsigned char *p = (const unsigned char *)(value ? value : ""); *p; ++p)
+        if (*p == '"' || *p == '\\') { g_string_append_c(text, '\\'); g_string_append_c(text, *p); }
+        else if (*p < 32) g_string_append_printf(text, "\\u%04x", *p);
+        else g_string_append_c(text, *p);
+    g_string_append_c(text, '"');
+}
+
+void madway_session_publish_state(struct madway_server *server)
+{
+    if (server->shutting_down || server->socket_name == NULL) return;
+    GString *text = g_string_new(NULL);
+    g_string_append_printf(text, "{\"workspace\":%u,\"title\":", server->active_workspace);
+    struct madway_view *view = server->focused_view;
+    append_json_string(text, view != NULL && madway_view_visible(view) ? view->toplevel->title : "");
+    g_string_append(text, "}\n");
+    char *path = session_path(server, "desktop.json");
+    g_file_set_contents(path, text->str, (gssize)text->len, NULL);
+    g_free(path); g_string_free(text, true);
+}
+
+void madway_session_menu(struct madway_server *server, double x, double y)
+{
+    // The fixed numeric suffix is parsed only by madway-shell, never a shell.
+    char action[96];
+    snprintf(action, sizeof(action), "desktop-menu %d %d", (int)x, (int)y);
+    madway_session_action(server, action);
 }

@@ -23,6 +23,7 @@ static void save_geometry(struct madway_view *view)
         .width = view->toplevel->base->geometry.width,
         .height = view->toplevel->base->geometry.height,
     };
+    if (view->floating) view->floating_geometry = view->restore_geometry;
 }
 
 void madway_apply_window_state(struct madway_view *view)
@@ -129,6 +130,16 @@ void madway_end_interactive(struct madway_server *server)
     if (server->interactive_view != NULL && server->interactive_mode == MADWAY_RESIZE &&
         server->interactive_view->toplevel->base->initialized)
         wlr_xdg_toplevel_set_resizing(server->interactive_view->toplevel, false);
+    if (server->interactive_view != NULL && server->interactive_mode == MADWAY_MOVE)
+    {
+        struct madway_view *view = server->interactive_view;
+        struct wlr_output *target = wlr_output_layout_output_at(server->output_layout,
+                view->scene_tree->node.x + view->toplevel->base->geometry.width / 2,
+                view->scene_tree->node.y + view->toplevel->base->geometry.height / 2);
+        struct madway_output *output;
+        wl_list_for_each(output, &server->outputs, link)
+            if (output->output == target) { view->output = output; break; }
+    }
     server->interactive_view = NULL;
     server->interactive_mode = MADWAY_NORMAL;
 }

@@ -37,6 +37,8 @@ add_executable(madway
     src/workspace.h
     src/layer.c
     src/layer.h
+    src/monitors.c
+    src/monitors.h
     src/session.c
     src/session.h
     "${LAYER_HEADER}"
@@ -63,5 +65,7 @@ target_include_directories(madway PRIVATE
 )
 
 install(TARGETS madway RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(PROGRAMS scripts/madway-session scripts/madway-shell DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS scripts/madway-session scripts/madway-shell scripts/madway-panel DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY share/madway DESTINATION ${CMAKE_INSTALL_DATADIR})
+
+configure_file(share/wayland-sessions/madway.desktop.in madway.desktop @ONLY)

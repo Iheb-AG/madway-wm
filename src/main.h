@@ -18,6 +18,7 @@
 
 #include "window.h"
 #include "session.h"
+#include <wlr/types/wlr_output_management_v1.h>
 
 struct madway_view;
 struct madway_layer;
@@ -38,6 +39,9 @@ struct madway_server
     struct madway_layer *keyboard_layer;
     struct madway_config config;
     pid_t session_pid;
+    int session_control_fd;
+    struct wl_event_source *session_control_event;
+    struct wlr_session *session;
     const char *socket_name; // Owned by wl_display; clients connect using WAYLAND_DISPLAY
 
     struct wlr_xdg_shell *xdg_shell;
@@ -54,6 +58,7 @@ struct madway_server
     struct wlr_seat *seat; // Routes keyboard and pointer events to clients
     struct wlr_cursor *cursor;
     struct wlr_xcursor_manager *cursor_manager;
+    const char *cursor_shape; // NULL while a client supplies the cursor image.
     struct wl_list keyboards;
     struct wl_list pointers;
     struct wl_listener new_input;
@@ -64,6 +69,7 @@ struct madway_server
     struct wl_listener cursor_frame;
     struct wl_listener request_cursor;
     struct wl_listener request_selection;
+    struct wl_listener request_primary_selection;
     struct madway_view *interactive_view;
     enum madway_interactive_mode interactive_mode;
     uint32_t interactive_edges, interactive_button;
@@ -80,6 +86,9 @@ struct madway_server
     // The backend announces outputs; each output has its own frame listeners.
     struct wl_listener new_output;
     struct wl_listener backend_destroy;
+    struct wlr_output_manager_v1 *output_manager;
+    struct wl_listener output_apply, output_test;
+    char output_error[192];
     struct wl_list outputs; // Contains struct madway_output.link entries
 };
 
@@ -90,6 +99,8 @@ struct madway_output
     struct wlr_scene_output *scene_output; // The part of the scene displayed by this output
     struct wlr_scene_rect *background; // Persistent black rectangle for this output
     struct wlr_box usable_area;
+    int layout_x, layout_y;
+    bool positioned;
     struct wl_list link;
     struct wl_listener frame;
     struct wl_listener request_state;

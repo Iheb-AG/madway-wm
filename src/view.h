@@ -16,7 +16,7 @@ struct madway_view
     struct madway_server *server;
     struct madway_output *output;
     unsigned workspace;
-    bool mapped, floating;
+    bool mapped, floating, compact_frame;
     struct wlr_box floating_geometry;
     struct wl_list layout_link;
     struct wlr_xdg_toplevel *toplevel;

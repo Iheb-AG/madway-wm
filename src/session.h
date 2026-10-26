@@ -5,7 +5,15 @@
 #include <sys/types.h>
 struct madway_server;
 
-struct madway_config { int title_height, tile_gap; };
+struct madway_config {
+    int title_height, tile_gap, master_percent;
+    int repeat_rate, repeat_delay;
+    bool default_floating, use_super;
+};
+bool madway_session_init(struct madway_server *server);
+void madway_session_finish(struct madway_server *server);
+void madway_session_publish_state(struct madway_server *server);
+void madway_session_menu(struct madway_server *server, double x, double y);
 void madway_session_reload(struct madway_server *server);
 bool madway_spawn(struct madway_server *server, char *const arguments[], pid_t *pid);
 void madway_launch_kitty(struct madway_server *server);

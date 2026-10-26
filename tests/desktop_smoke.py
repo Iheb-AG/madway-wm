@@ -51,6 +51,9 @@ elif name=='brightnessctl':
 p.write_text(json.dumps(state))
 ''')
         path.chmod(0o700)
+    kitty=bin_dir/"kitty"
+    kitty.write_text('#!/bin/sh\nexec /usr/bin/kitty --config NONE --title floating-fixture -o linux_display_server=wayland -o confirm_os_window_close=0 /bin/sh -c "sleep 30"\n')
+    kitty.chmod(0o700)
     marker=root/"launched"
     fixture=bin_dir/"madway-fixture"
     fixture.write_text('#!/bin/sh\nprintf "%s\\n" "$WAYLAND_DISPLAY" >> "'+str(marker)+'"\n')
@@ -66,9 +69,10 @@ p.write_text(json.dumps(state))
     ready=root/"go"
     env=os.environ.copy()
     env.update(HOME=str(home),XDG_CONFIG_HOME=str(config_home),XDG_DATA_HOME=str(data_home),
-        XDG_RUNTIME_DIR=str(runtime),WLR_BACKENDS='headless',WLR_RENDERER='pixman',MADWAY_SESSION='1',
-        PATH=str(bin_dir)+':'+env['PATH'],MADWAY_LAUNCH_TEST_READY=str(ready))
+        XDG_RUNTIME_DIR=str(runtime),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='2',WLR_RENDERER='pixman',LIBGL_ALWAYS_SOFTWARE='1',MADWAY_SESSION='1',
+        PATH=str(bin_dir)+':'+env['PATH'],MADWAY_LAUNCH_TEST_READY=str(ready),MADWAY_TEST_HOTPLUG=str(root/'hotplug'))
     env.pop('DISPLAY',None)
+    env.pop('MADWAY_NATIVE',None)
     server_env=env.copy();server_env['LD_PRELOAD']=str(probe)
     if os.environ.get('MADWAY_TEST_LIBASAN'):
         server_env['LD_PRELOAD']=os.environ['MADWAY_TEST_LIBASAN']+':'+str(probe)
@@ -114,6 +118,69 @@ p.write_text(json.dumps(state))
             control('apply')
             wait_for(lambda:'LIVE SETTINGS RELOAD PASS' in log_path.read_text())
             wait_for(lambda:'OVERLAY FOCUS RESTORED PASS' in log_path.read_text())
+            wait_for(lambda:'FLOATING DEFAULT AND SHORTCUTS PASS' in log_path.read_text(),12)
+            config['input']={'modifier':'super','repeat_rate':'40','repeat_delay':'250'}
+            with config_path.open('w') as file:config.write(file)
+            control('apply')
+            wait_for(lambda:'LIVE INPUT SETTINGS PASS' in log_path.read_text())
+            outputs_file=runtime/('madway-'+env['WAYLAND_DISPLAY'])/'outputs.json'
+            def outputs():return json.loads(outputs_file.read_text())
+            initial=outputs()['outputs'];assert len(initial)==2
+            first,second=[output['name'] for output in initial]
+            config['output:'+first]={'enabled':'true','x':'0','y':'0','scale':'1','transform':'0','mode':'640x480@60000'}
+            config['output:'+second]={'enabled':'true','x':'640','y':'0','scale':'1','transform':'0','mode':'800x600@60000'}
+            def apply_config():
+                with config_path.open('w') as file:config.write(file)
+                control('apply')
+            apply_config()
+            wait_for(lambda:all(item['width'] in (640,800) for item in outputs()['outputs']))
+            assert not outputs()['error'],outputs()
+            config['output:'+second].update(scale='2',transform='1',x='0',y='480')
+            apply_config()
+            wait_for(lambda:any(item['name']==second and item['scale']==2 and item['transform']==1 and item['y']==480 for item in outputs()['outputs']))
+            config['output:'+first]['enabled']='false'
+            apply_config()
+            wait_for(lambda:sum(item['enabled'] for item in outputs()['outputs'])==1)
+            config['output:'+second]['enabled']='false'
+            apply_config()
+            wait_for(lambda:bool(outputs()['error']))
+            assert sum(item['enabled'] for item in outputs()['outputs'])==1
+            config['output:'+first]['enabled']='true'
+            config['output:'+second].update(enabled='true',scale='1',transform='0',x='640',y='0')
+            apply_config()
+            wait_for(lambda:sum(item['enabled'] for item in outputs()['outputs'])==2 and not outputs()['error'])
+            (root/'hotplug').touch()
+            wait_for(lambda:len(outputs()['outputs'])==3)
+            config['output:'+first]['enabled']='false'
+            config['output:'+second]['enabled']='false'
+            apply_config()
+            wait_for(lambda:sum(item['enabled'] for item in outputs()['outputs'])==1 and not outputs()['error'])
+            (root/'hotplug').unlink()
+            wait_for(lambda:'OUTPUT HOTPLUG AND WINDOW RECOVERY PASS' in log_path.read_text())
+            wait_for(lambda:len(outputs()['outputs'])==2)
+            assert any(item['enabled'] for item in outputs()['outputs'])
+            config['output:'+first]['enabled']='true'
+            config['output:'+second]['enabled']='true'
+            apply_config()
+            wait_for(lambda:sum(item['enabled'] for item in outputs()['outputs'])==2)
+            print('PASS: two monitor profiles, modes, positions, scale/rotation, disable/re-enable, and rejection of all-disabled configuration.')
+            subprocess.run([sys.executable,str(repo/'tests/settings_ui.py')],env=env,check=True,timeout=12)
+            wait_for(lambda:'NEW WINDOW POLICY SETTINGS PASS' in log_path.read_text(),12)
+            mako_config=outputs_file.parent/'mako.conf'
+            wait_for(lambda:'anchor=bottom-left' in mako_config.read_text() and 'width=360' in mako_config.read_text())
+            wait_for(lambda:'DESKTOP MENU ACTION AND FULLSCREEN PANEL PASS' in log_path.read_text())
+            control('workspace',value=1)
+            desktop_file=outputs_file.parent/'desktop.json'
+            wait_for(lambda:json.loads(desktop_file.read_text())['workspace']==1)
+            control('workspace',value=0)
+            wait_for(lambda:json.loads(desktop_file.read_text())['workspace']==0)
+            assert 'Traceback (most recent call last)' not in log_path.read_text(),log_path.read_text()
+            config.read(config_path)
+            config['panel']['enabled']='false';apply_config()
+            wait_for(lambda:'PANEL TOGGLE OFF PASS' in log_path.read_text())
+            config['panel'].update(enabled='true',height='22');apply_config()
+            wait_for(lambda:'PANEL HEIGHT RELOAD PASS' in log_path.read_text())
+            print('PASS: desktop right-click menu/window action, fullscreen panel hiding, and workspace controls.')
             control('shutdown-sound')
             wait_for(lambda:audio_log.exists() and 'shutdown.ogg' in audio_log.read_text())
             assert 'startup.ogg' in audio_log.read_text()
@@ -121,6 +188,24 @@ p.write_text(json.dumps(state))
             assert server.returncode==0,log_path.read_text()
             assert 'logout.ogg' in audio_log.read_text()
         print(log_path.read_text())
+        # Restart the same temporary session to verify saved monitor profiles.
+        restart_path=root/'restart.log'
+        with restart_path.open('w') as restart_log:
+            server=subprocess.Popen([str(build/'madway')],env=env,stdout=restart_log,stderr=restart_log)
+            deadline=time.monotonic()+8
+            while time.monotonic()<deadline:
+                if outputs_file.exists() and 'desktop services ready' in restart_path.read_text():break
+                assert server.poll() is None,restart_path.read_text()
+                time.sleep(.03)
+            else:raise AssertionError(restart_path.read_text())
+            restored=json.loads(outputs_file.read_text())
+            assert not restored['error'] and len(restored['outputs'])==2,restored
+            by_name={output['name']:output for output in restored['outputs']}
+            assert by_name[first]['width']==640 and by_name[first]['x']==0
+            assert by_name[second]['width']==800 and by_name[second]['x']==640
+            server.send_signal(signal.SIGTERM);server.wait(timeout=5)
+            assert server.returncode==0,restart_path.read_text()
+        print('PASS: monitor profiles restored after compositor restart.')
         print('PASS: private Mako notifications, swaybg, both Wofi launchers with keyboard input, real settings GUI, media-key indicators with mocked hardware, live config reload, and all three sound events with mocked playback.')
     finally:
         if server is not None and server.poll() is None:

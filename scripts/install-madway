@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Build as the invoking user; elevate only the system installation steps.
+set -euo pipefail
+madway_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+prefix=/usr/local
+sessions_dir=/usr/share/wayland-sessions
+build_dir="$madway_root/build-install"
+destdir=
+dry_run=false
+install_deps=false
+usage() {
+    cat <<'EOF'
+Usage: ./scripts/install-madway [options]
+  --dry-run             Print the build/install commands without changing files
+  --deps                Install Arch/CachyOS dependencies with pacman
+  --prefix PATH         Binary/data prefix (default /usr/local)
+  --sessions-dir PATH   Login session directory (default /usr/share/wayland-sessions)
+  --build-dir PATH      Build directory (default build-install in this checkout)
+  --destdir PATH        Stage everything below PATH; no sudo or dependency install
+  --help                Show this help
+
+Run normally as your regular user. The installer requests sudo only for system
+files. It adds a madway login choice and leaves your current desktop/default
+session alone. It never logs out, reboots, changes device permissions, or enables
+services. Log out afterward and select 'madway (experimental)' in the login menu.
+EOF
+}
+while (($#)); do
+    case "$1" in
+        --dry-run) dry_run=true; shift ;;
+        --deps) install_deps=true; shift ;;
+        --prefix|--sessions-dir|--build-dir|--destdir)
+            option=$1
+            [[ $# -ge 2 && -n $2 ]] || { echo "$1 requires a path" >&2; exit 2; }
+            case "$option" in
+                --prefix) prefix=$2 ;;
+                --sessions-dir) sessions_dir=$2 ;;
+                --build-dir) build_dir=$2 ;;
+                --destdir) destdir=$2 ;;
+            esac
+            shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+for path in "$prefix" "$sessions_dir"; do
+    [[ $path == /* && $path != *$'\n'* && $path != *'"'* && $path != *'%'* && $path != *'$'* && $path != *'`'* && $path != *\\* ]] || {
+        echo 'Install paths must be absolute and valid in a desktop entry.' >&2; exit 2;
+    }
+done
+if [[ -n $destdir ]]; then
+    [[ $destdir == /* && $destdir != / ]] || { echo '--destdir must be an absolute staging directory other than /' >&2; exit 2; }
+    [[ $install_deps == false ]] || { echo '--deps cannot be combined with --destdir' >&2; exit 2; }
+fi
+run() {
+    printf '+'
+    printf ' %q' "$@"
+    printf '\n'
+    if [[ $dry_run == false ]]; then "$@"; fi
+}
+elevate=()
+if [[ -z $destdir && $EUID -ne 0 ]]; then elevate=(sudo); fi
+if [[ $install_deps == true ]]; then
+    command -v pacman >/dev/null || { echo '--deps supports Arch/CachyOS; on other distributions install the README dependencies first.' >&2; exit 1; }
+    run "${elevate[@]}" pacman -S --needed base-devel cmake pkgconf wlroots0.20 wayland wayland-protocols libxkbcommon pango glib2 \
+        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg kitty wireplumber libnotify pipewire brightnessctl grim
+fi
+if [[ $dry_run == false ]]; then
+    for program in cmake cc pkg-config python3 wayland-scanner dbus-run-session kitty mako wofi swaybg wpctl notify-send; do
+        command -v "$program" >/dev/null || { echo "Missing dependency: $program. Use --deps on Arch/CachyOS or see README.md." >&2; exit 1; }
+    done
+    pkg-config --exists wlroots-0.20 wayland-server xkbcommon pangocairo gio-2.0 || {
+        echo 'Missing development dependencies; wlroots-0.20 is required.' >&2; exit 1;
+    }
+    for feature in have_drm_backend have_libinput_backend have_session; do
+        [[ $(pkg-config --variable="$feature" wlroots-0.20) == true ]] || {
+            echo "Your wlroots build lacks $feature; a native login session cannot use it." >&2; exit 1;
+        }
+    done
+    python3 - <<'PY'
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('GtkLayerShell', '0.1')
+from gi.repository import Gtk, GtkLayerShell, Gio
+PY
+fi
+run cmake -S "$madway_root" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$prefix"
+run cmake --build "$build_dir" --parallel 2
+if [[ -n $destdir ]]; then
+    run env "DESTDIR=$destdir" cmake --install "$build_dir"
+    run install -Dm644 "$build_dir/madway.desktop" "$destdir$sessions_dir/madway.desktop"
+else
+    run "${elevate[@]}" cmake --install "$build_dir"
+    run "${elevate[@]}" install -Dm644 "$build_dir/madway.desktop" "$sessions_dir/madway.desktop"
+fi
+if [[ $dry_run == false ]]; then
+    printf '\nInstalled madway under %s. Login entry: %s/madway.desktop\n' "${destdir}${prefix}" "${destdir}${sessions_dir}"
+else
+    printf '\nDry run only; no files or packages changed.\n'
+fi

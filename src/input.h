@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 struct madway_server;
+void madway_reload_input(struct madway_server *server);
+void madway_map_pointer_outputs(struct madway_server *server);
 
 bool madway_init_input(struct madway_server *server);
 void madway_finish_input(struct madway_server *server);

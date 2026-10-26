@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-madway_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+madway_script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 if [ -x "$madway_script_dir/madway" ]; then
     madway_binary="$madway_script_dir/madway"
 elif [ -x "$madway_script_dir/../build/madway" ]; then
@@ -8,5 +8,19 @@ elif [ -x "$madway_script_dir/../build/madway" ]; then
 else
     madway_binary=$(command -v madway)
 fi
-# Nested sessions get their own notification service instead of claiming the host bus.
+if [ "${1-}" = "--native" ]; then
+    shift
+    unset WAYLAND_DISPLAY WAYLAND_SOCKET DISPLAY
+    export MADWAY_NATIVE=1 WLR_BACKENDS=drm,libinput
+    export XDG_CURRENT_DESKTOP=madway XDG_SESSION_DESKTOP=madway XDG_SESSION_TYPE=wayland
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS-}" ] && [ -S "${XDG_RUNTIME_DIR-}/bus" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+    fi
+    if [ -n "${DBUS_SESSION_BUS_ADDRESS-}" ]; then
+        exec env MADWAY_SESSION=1 "$madway_binary" "$@"
+    fi
+else
+    unset MADWAY_NATIVE
+fi
+# Nested sessions isolate notifications from the host; native logins use the user bus.
 exec dbus-run-session -- env MADWAY_SESSION=1 "$madway_binary" "$@"

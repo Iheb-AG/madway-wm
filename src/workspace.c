@@ -5,6 +5,9 @@
 #include "window.h"
 #include "decoration.h"
 #include "input.h"
+#include "session.h"
+#include "layer.h"
+#include <string.h>
 #include <wlr/util/edges.h>
 #include <wlr/util/log.h>
 
@@ -47,8 +50,13 @@ void madway_workspace_arrange(struct madway_server *server)
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
     {
-        if (view->output == NULL && !wl_list_empty(&server->outputs))
-            view->output = wl_container_of(server->outputs.next, view->output, link);
+        if (view->output == NULL || !view->output->output->enabled)
+        {
+            view->output = NULL;
+            struct madway_output *candidate;
+            wl_list_for_each(candidate, &server->outputs, link)
+                if (candidate->output->enabled) { view->output = candidate; break; }
+        }
         bool visible = view->output != NULL && madway_view_visible(view);
         struct madway_view *fullscreen = visible ? fullscreen_on(server, view->output) : NULL;
         if (fullscreen != NULL && view != fullscreen) visible = false;
@@ -58,6 +66,7 @@ void madway_workspace_arrange(struct madway_server *server)
     struct madway_output *output;
     wl_list_for_each(output, &server->outputs, link)
     {
+        if (!output->output->enabled) continue;
         int width = output->usable_area.width, height = output->usable_area.height;
         int x = output->usable_area.x, y = output->usable_area.y;
         int gap = server->config.tile_gap;
@@ -83,7 +92,7 @@ void madway_workspace_arrange(struct madway_server *server)
             else
             {
                 // No outer padding. Master on the left; equally divided stack on the right.
-                int master_width = (width - gap) / 2;
+                int master_width = (width - gap) * server->config.master_percent / 100;
                 if (index == 0)
                     configure_tile(view, x, y, master_width, height);
                 else
@@ -101,6 +110,17 @@ void madway_workspace_arrange(struct madway_server *server)
             }
         }
     }
+    struct madway_layer *layer;
+    wl_list_for_each(layer, &server->layers, link)
+        if (strncmp(layer->surface->namespace, "madway-panel", 12) == 0)
+        {
+            struct madway_output *output;
+            wl_list_for_each(output, &server->outputs, link)
+                if (output->output == layer->surface->output)
+                    wlr_scene_node_set_enabled(&layer->tree->node, layer->mapped && output->output->enabled &&
+                            fullscreen_on(server, output) == NULL);
+        }
+    madway_session_publish_state(server);
     madway_rebase_cursor(server);
 }
 
@@ -148,7 +168,17 @@ void madway_workspace_move_view(struct madway_view *view, unsigned workspace)
 
 void madway_toggle_floating(struct madway_view *view)
 {
-    if (view->fullscreen || view->maximized) return;
+    if (view->server->interactive_view == view)
+    {
+        if (!view->server->interactive_forward_button)
+            view->server->consumed_button = view->server->interactive_button;
+        madway_end_interactive(view->server);
+    }
+    madway_cancel_pointer_grab(view->server);
+    bool restore_floating = view->fullscreen || view->maximized;
+    if (view->fullscreen) madway_set_fullscreen(view, false);
+    if (view->maximized) madway_set_maximized(view, false);
+    if (restore_floating) view->floating = false;
     if (view->floating)
         view->floating_geometry = (struct wlr_box){
             .x = view->scene_tree->node.x, .y = view->scene_tree->node.y,
@@ -166,6 +196,7 @@ void madway_toggle_floating(struct madway_view *view)
     view->frame_visible = false;
     madway_workspace_arrange(view->server);
     madway_focus_view(view->server, view);
+    wlr_log(WLR_INFO, "Window mode: %s", view->floating ? "floating" : "tiled");
 }
 
 void madway_cycle_focus(struct madway_server *server, bool backwards)

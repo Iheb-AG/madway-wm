@@ -5,6 +5,7 @@
 #include "window.h"
 #include "workspace.h"
 #include "layer.h"
+#include "session.h"
 #include <string.h>
 
 #include <stdlib.h>
@@ -28,6 +29,7 @@ void madway_focus_view(struct madway_server *server, struct madway_view *view)
     }
     struct madway_view *previous = server->focused_view;
     server->focused_view = view;
+    madway_session_publish_state(server);
     if (previous != NULL) madway_frame_update(previous);
     if (view == NULL)
     {
@@ -86,7 +88,7 @@ static void handle_view_commit(struct wl_listener *listener, void *data)
         if (view->toplevel->requested.fullscreen) madway_set_fullscreen(view, true);
         else if (view->toplevel->requested.maximized) madway_set_maximized(view, true);
     }
-    if (view->decoration != NULL)
+    if (view->decoration != NULL && !view->compact_frame)
     {
         bool previous_mode = view->decorated;
         view->decorated = view->decoration->current.mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
@@ -113,26 +115,30 @@ static void handle_view_map(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, map);
 
-    // Keep a natural floating geometry even when the default tiled layout fills the output.
-    int offset = 32 + 24 * ((wl_list_length(&view->server->views) - 1) % 8);
+    int offset = 16 + 24 * ((wl_list_length(&view->server->views) - 1) % 8);
     struct madway_output *output;
-    wl_list_for_each(output, &view->server->outputs, link)
-    {
-        offset += output->scene_output->x;
-        break;
-    }
-    if (!view->maximized && !view->fullscreen)
-        wlr_scene_node_set_position(&view->scene_tree->node, offset, 32);
-    view->mapped = true;
-    if (view->toplevel->parent != NULL ||
-        (view->toplevel->app_id != NULL && !strcmp(view->toplevel->app_id, "org.madway.Settings")))
-        view->floating = true;
-    view->floating_geometry = (struct wlr_box){.x = offset, .y = 32,
-        .width = view->toplevel->base->geometry.width, .height = view->toplevel->base->geometry.height};
     struct wlr_output *target = wlr_output_layout_output_at(view->server->output_layout,
             view->server->cursor->x, view->server->cursor->y);
     wl_list_for_each(output, &view->server->outputs, link)
         if (output->output == target) { view->output = output; break; }
+    if (view->output == NULL)
+        wl_list_for_each(output, &view->server->outputs, link)
+            if (output->output->enabled) { view->output = output; break; }
+    int x = view->output != NULL ? view->output->usable_area.x + offset : offset;
+    int y = view->output != NULL ? view->output->usable_area.y + offset : offset;
+    if (!view->maximized && !view->fullscreen)
+        wlr_scene_node_set_position(&view->scene_tree->node, x, y);
+    view->mapped = true;
+    if (view->toplevel->parent != NULL ||
+        (view->toplevel->app_id != NULL && !strcmp(view->toplevel->app_id, "org.madway.Settings")))
+        view->floating = true;
+    if (view->toplevel->app_id != NULL && !strcmp(view->toplevel->app_id, "org.madway.Settings"))
+    {
+        view->compact_frame = true;
+        view->decorated = true;
+    }
+    view->floating_geometry = (struct wlr_box){.x = x, .y = y,
+        .width = view->toplevel->base->geometry.width, .height = view->toplevel->base->geometry.height};
     if (view->toplevel->parent != NULL)
     {
         struct madway_view *parent;
@@ -250,6 +256,7 @@ static void handle_view_title(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, set_title);
+    madway_session_publish_state(view->server);
     madway_frame_update(view);
 }
 
@@ -264,6 +271,7 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data)
         return;
     }
     view->server = server;
+    view->floating = server->config.default_floating;
     view->workspace = server->active_workspace;
     view->toplevel = toplevel;
     view->scene_tree = wlr_scene_tree_create(server->windows);

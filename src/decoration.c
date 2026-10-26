@@ -43,9 +43,15 @@ static const struct wlr_buffer_impl title_impl = {
     .end_data_ptr_access = finish_title_read,
 };
 
+int madway_frame_title_height(struct madway_view *view)
+{
+    int height = view->server->config.title_height;
+    return view->compact_frame && height > 16 ? 16 : height;
+}
+
 static struct wlr_buffer *draw_title(struct madway_view *view, int width)
 {
-    int title_height = view->server->config.title_height;
+    int title_height = madway_frame_title_height(view);
     struct title_pixels *pixels = calloc(1, sizeof(*pixels));
     if (pixels == NULL) return NULL;
     pixels->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, title_height);
@@ -116,7 +122,7 @@ bool madway_frame_create(struct madway_view *view)
 void madway_frame_extents(struct madway_view *view, int *border, int *title)
 {
     *border = view->decorated && !view->fullscreen ? MADWAY_BORDER : 0;
-    *title = *border && view->floating ? view->server->config.title_height : 0;
+    *title = *border && view->floating ? madway_frame_title_height(view) : 0;
 }
 
 void madway_frame_update(struct madway_view *view)
@@ -179,7 +185,7 @@ uint32_t madway_frame_edges(struct madway_view *view, double lx, double ly)
     if (!view->decorated || !view->floating || view->fullscreen || view->maximized) return 0;
     double x = lx - view->scene_tree->node.x, y = ly - view->scene_tree->node.y;
     int width = view->toplevel->base->geometry.width + 2;
-    int height = view->toplevel->base->geometry.height + view->server->config.title_height + 2;
+    int height = view->toplevel->base->geometry.height + madway_frame_title_height(view) + 2;
     if (x < 0 || y < 0 || x >= width || y >= height) return 0;
     return (x < 1 ? WLR_EDGE_LEFT : x >= width - 1 ? WLR_EDGE_RIGHT : 0) |
         (y < 1 ? WLR_EDGE_TOP : y >= height - 1 ? WLR_EDGE_BOTTOM : 0);
@@ -190,7 +196,7 @@ enum madway_frame_part madway_frame_at(struct madway_view *view, double lx, doub
     if (!view->decorated || !view->floating || view->fullscreen) return MADWAY_FRAME_NONE;
     double x = lx - view->scene_tree->node.x, y = ly - view->scene_tree->node.y;
     int width = view->toplevel->base->geometry.width;
-    if (x < 1 || x >= width + 1 || y < 1 || y >= view->server->config.title_height + 1)
+    if (x < 1 || x >= width + 1 || y < 1 || y >= madway_frame_title_height(view) + 1)
         return MADWAY_FRAME_NONE;
     if (x >= width - 15) return MADWAY_FRAME_CLOSE;
     if (x >= width - 31) return MADWAY_FRAME_MAXIMIZE;

@@ -32,3 +32,5 @@ __pycache__/
 
 # Personal media assets (not distributed with madway)
 /longhorn assets/
+
+COMMIT_NOTES.md

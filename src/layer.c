@@ -11,7 +11,7 @@
 void madway_layer_focus(struct madway_layer *layer)
 {
     struct madway_server *server = layer->server;
-    if (!layer->mapped || layer->surface->current.keyboard_interactive ==
+    if (!layer->mapped || !layer->surface->output->enabled || layer->surface->current.keyboard_interactive ==
             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) return;
     server->keyboard_layer = layer;
     struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
@@ -27,7 +27,7 @@ static void restore_focus(struct madway_server *server)
     if (server->shutting_down) return;
     struct madway_layer *layer;
     wl_list_for_each_reverse(layer, &server->layers, link)
-        if (layer->mapped && layer->surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP &&
+        if (layer->mapped && layer->surface->output->enabled && layer->surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP &&
             layer->surface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
         { madway_layer_focus(layer); return; }
     if (server->focused_view != NULL && madway_view_visible(server->focused_view))
@@ -38,9 +38,18 @@ static void restore_focus(struct madway_server *server)
 void madway_arrange_layers(struct madway_server *server)
 {
     if (server->shutting_down) return;
+    struct madway_layer *entry;
+    wl_list_for_each(entry, &server->layers, link)
+        wlr_scene_node_set_enabled(&entry->tree->node, entry->mapped && entry->surface->output->enabled);
+    if (server->keyboard_layer != NULL && !server->keyboard_layer->surface->output->enabled)
+    {
+        server->keyboard_layer = NULL;
+        wlr_seat_keyboard_notify_clear_focus(server->seat);
+    }
     struct madway_output *output;
     wl_list_for_each(output, &server->outputs, link)
     {
+        if (!output->output->enabled) continue;
         int width, height;
         wlr_output_effective_resolution(output->output, &width, &height);
         struct wlr_box full = {output->scene_output->x, output->scene_output->y, width, height};
@@ -146,6 +155,8 @@ static void handle_new_layer(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, new_layer);
     struct wlr_layer_surface_v1 *surface = data;
+    if (surface->output == NULL && server->cursor != NULL)
+        surface->output = wlr_output_layout_output_at(server->output_layout, server->cursor->x, server->cursor->y);
     if (surface->output == NULL) surface->output = wlr_output_layout_get_center_output(server->output_layout);
     if (surface->output == NULL) { wlr_layer_surface_v1_destroy(surface); return; }
     struct madway_layer *layer = calloc(1, sizeof(*layer));

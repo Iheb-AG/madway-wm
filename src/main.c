@@ -5,6 +5,7 @@
 #include "workspace.h"
 #include "layer.h"
 #include "session.h"
+#include "monitors.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -14,38 +15,12 @@
 #include <sys/wait.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/util/log.h>
-
-static void arrange_output_scenes(struct madway_server *server)
-{
-    // Give each output its own area in one shared scene, placed left to right.
-    int x = 0;
-    struct madway_output *output;
-    wl_list_for_each(output, &server->outputs, link)
-    {
-        int width, height;
-        wlr_output_effective_resolution(output->output, &width, &height);
-        wlr_scene_output_set_position(output->scene_output, x, 0);
-        wlr_scene_node_set_position(&output->background->node, x, 0);
-        wlr_scene_rect_set_size(output->background, width, height);
-        if (server->output_layout != NULL &&
-            wlr_output_layout_add(server->output_layout, output->output, x, 0) == NULL)
-        {
-            wlr_log(WLR_ERROR, "Could not add %s to the input layout", output->output->name);
-        }
-        x += width;
-    }
-    if (server->cursor != NULL)
-    {
-        wlr_cursor_warp_closest(server->cursor, NULL, server->cursor->x, server->cursor->y);
-        madway_rebase_cursor(server);
-    }
-    madway_arrange_layers(server);
-    madway_arrange_views(server);
-}
 
 static void handle_output_frame(struct wl_listener *listener, void *data)
 {
@@ -85,7 +60,7 @@ static void handle_output_request_state(struct wl_listener *listener, void *data
         wlr_log(WLR_ERROR, "Could not apply requested state for %s", output->output->name);
         return;
     }
-    arrange_output_scenes(output->server);
+    madway_arrange_outputs(output->server);
     wlr_output_schedule_frame(output->output);
 }
 
@@ -118,7 +93,7 @@ static void handle_output_destroy(struct wl_listener *listener, void *data)
     wlr_scene_node_destroy(&output->background->node);
     // wlroots destroys the scene-output viewport when its wlr_output is destroyed.
     free(output);
-    arrange_output_scenes(server);
+    madway_arrange_outputs(server);
 
     // Closing the last nested window ends this demonstration.
     if (wl_list_empty(&server->outputs))
@@ -180,6 +155,9 @@ static void handle_new_output(struct wl_listener *listener, void *data)
     if (wlr_output_is_wl(display_output))
     {
         wlr_wl_output_set_title(display_output, "madway-wm");
+        // Host cursor queues can exhaust during shape changes across nested windows.
+        // Render the nested cursor in our scene; native outputs keep hardware cursors.
+        wlr_output_lock_software_cursors(display_output, true);
     }
 
     struct wlr_output_state state;
@@ -202,7 +180,8 @@ static void handle_new_output(struct wl_listener *listener, void *data)
         return;
     }
 
-    arrange_output_scenes(server);
+    madway_arrange_outputs(server);
+    madway_reload_outputs(server);
 
     if (server->cursor_manager != NULL)
     {
@@ -270,7 +249,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     wlr_log_init(WLR_INFO, NULL);
-    struct madway_server server = {0};
+    struct madway_server server = {.session_control_fd = -1};
     wl_list_init(&server.outputs);
     wl_list_init(&server.views);
     wl_list_init(&server.layout_views);
@@ -298,7 +277,7 @@ int main(int argc, char *argv[])
     }
     // wlroots backend
     server.backend = wlr_backend_autocreate(
-        event_loop, NULL);
+        event_loop, &server.session);
     if (server.backend == NULL)
     {
         wlr_log(WLR_ERROR, "Could not create the backend");
@@ -321,7 +300,9 @@ int main(int argc, char *argv[])
         !wlr_renderer_init_wl_display(server.renderer, server.display) ||
         wlr_compositor_create(server.display, 5, server.renderer) == NULL ||
         wlr_subcompositor_create(server.display) == NULL ||
-        wlr_data_device_manager_create(server.display) == NULL)
+        wlr_screencopy_manager_v1_create(server.display) == NULL ||
+        wlr_data_device_manager_create(server.display) == NULL ||
+        wlr_primary_selection_v1_device_manager_create(server.display) == NULL)
     {
         wlr_log(WLR_ERROR, "Could not initialize rendering resources");
         goto cleanup;
@@ -345,7 +326,7 @@ int main(int argc, char *argv[])
     server.output_layout = wlr_output_layout_create(server.display);
     if (server.output_layout == NULL ||
         wlr_xdg_output_manager_v1_create(server.display, server.output_layout) == NULL ||
-        !madway_init_input(&server) || !madway_init_layers(&server))
+        !madway_init_input(&server) || !madway_init_layers(&server) || !madway_init_monitors(&server))
     {
         wlr_log(WLR_ERROR, "Could not initialize input handling");
         goto cleanup;
@@ -355,6 +336,12 @@ int main(int argc, char *argv[])
     if (server.socket_name == NULL)
     {
         wlr_log(WLR_ERROR, "Could not create the Wayland socket in XDG_RUNTIME_DIR");
+        goto cleanup;
+    }
+
+    if (!madway_session_init(&server))
+    {
+        wlr_log(WLR_ERROR, "Could not initialize desktop control socket");
         goto cleanup;
     }
 
@@ -368,7 +355,8 @@ int main(int argc, char *argv[])
     wlr_log(WLR_INFO, "Listening on WAYLAND_DISPLAY=%s", server.socket_name);
     wlr_log(WLR_INFO, "Launch a client from another terminal: WAYLAND_DISPLAY=%s kitty -o linux_display_server=wayland",
             server.socket_name);
-    wlr_log(WLR_INFO, "Alt+Enter: Kitty; Alt+D: apps; Alt+Shift+D: commands; Alt+Comma: settings; Alt+1..9: workspace");
+    wlr_log(WLR_INFO, "Modifier=%s; Enter: Kitty; T/Space: floating; D: apps; Shift+D: commands; Comma: settings; 1..9: workspace",
+            server.config.use_super ? "Super" : "Alt");
     madway_session_start(&server);
 
     // run event loop
@@ -379,6 +367,8 @@ int main(int argc, char *argv[])
 cleanup:
     madway_session_stop(&server);
     server.shutting_down = true;
+    madway_session_finish(&server);
+    madway_finish_monitors(&server);
     wl_display_destroy_clients(server.display);
     if (server.xdg_shell != NULL)
     {
@@ -386,6 +376,8 @@ cleanup:
         wl_list_remove(&server.new_popup.link);
     }
     if (server.decoration_manager != NULL) wl_list_remove(&server.new_decoration.link);
+    if (server.output_manager != NULL)
+    { wl_list_remove(&server.output_apply.link); wl_list_remove(&server.output_test.link); }
     if (server.layer_shell != NULL) wl_list_remove(&server.new_layer.link);
     madway_finish_input(&server);
     if (server.backend != NULL)

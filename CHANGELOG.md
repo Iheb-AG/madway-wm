@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Add a configurable 24px multi-output top bar with workspace/title/status and
+  utility controls, plus a shared desktop right-click menu.
+- Add a staged/dry-run-aware CachyOS/Arch installer, native DRM/libinput session
+  entry, activation-environment setup, and native VT switching. Hardware session
+  validation remains open; the existing desktop is left installed.
+- Add real application screenshots, capture automation, installation docs, and
+  menu/panel/installer regression checks.
+
+- Map each named nested pointer to its own output and refresh mappings after
+  layout/hotplug changes, correcting clicks and drags reaching the wrong screen.
+- Reuse unchanged compositor cursor images instead of rebuilding them for every
+  background motion event. Nested outputs use software cursors to avoid host
+  cursor-buffer queue exhaustion. Add primary-selection protocol support and
+  forwarding.
+- Add real parent/nested-client pointer and copy/paste regression coverage.
+
+- Floating is now the default for new normal windows, with a configurable
+  floating/tiled policy. Alt+T is an alternative to Alt+Space; the toggle restores
+  fullscreen/maximized windows to floating instead of ignoring the request.
+- Categorized settings with a compact compositor-owned title bar, default window
+  policy, master ratio, Alt/Super modifier, keyboard repeat controls, notification
+  options, media-key steps, and existing wallpaper/sound/session controls.
+- Per-monitor enable/mode/refresh/position/scale/rotation settings with persistent
+  profiles, output-management protocol support, hotplug handling, and recovery of
+  windows from disabled/removed outputs. Physical hardware validation remains open.
+
 ## 0.1.0-alpha.1 — 2026-10-26
 
 First experimental source release of madway. This preview is intended for

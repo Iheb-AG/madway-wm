@@ -4,6 +4,7 @@
 #include "view.h"
 #include "layer.h"
 #include "workspace.h"
+#include "decoration.h"
 #include <unistd.h>
 #include <assert.h>
 #include <dlfcn.h>
@@ -14,6 +15,8 @@
 #include <string.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_pointer.h>
+#include <wlr/backend/multi.h>
+#include <wlr/backend/headless.h>
 
 static struct madway_server *server;
 static struct wlr_keyboard keyboard;
@@ -22,6 +25,14 @@ static bool keyboard_live, pointer_live;
 static struct wl_listener backend_destroy;
 static struct wl_event_source *timer;
 static int stage, ticks;
+static struct wlr_backend *headless;
+static struct wlr_output *hotplug_output;
+static struct madway_view *previous_view;
+static void find_headless(struct wlr_backend *backend, void *data)
+{
+    (void)data;
+    if (wlr_backend_is_headless(backend)) headless = backend;
+}
 static uint32_t timestamp = 100;
 static const struct wlr_keyboard_impl keyboard_impl = {.name = "madway-test-keyboard"};
 static const struct wlr_pointer_impl pointer_impl = {.name = "madway-test-pointer"};
@@ -96,7 +107,8 @@ static int run_stage(void *data) {
         struct madway_view *view;
         wl_list_for_each(view,&server->views,link)
             if(view->mapped && view->toplevel->app_id && !strcmp(view->toplevel->app_id,"org.madway.Settings")) {
-                assert(view->floating);
+                assert(view->floating && view->compact_frame && view->decorated);
+                assert(view->frame_title_height > 0 && view->frame_title_height <= 16);
                 key(KEY_VOLUMEUP,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_VOLUMEUP,WL_KEYBOARD_KEY_STATE_RELEASED);
                 key(KEY_BRIGHTNESSUP,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_BRIGHTNESSUP,WL_KEYBOARD_KEY_STATE_RELEASED);
                 fprintf(stderr,"SETTINGS WINDOW AND MEDIA KEYS PASS\n");stage=8;break;
@@ -114,7 +126,120 @@ static int run_stage(void *data) {
     } else if(stage==10 && server->keyboard_layer==NULL) {
         assert(server->focused_view!=NULL);
         assert(server->seat->keyboard_state.focused_surface==server->focused_view->toplevel->base->surface);
-        fprintf(stderr,"OVERLAY FOCUS RESTORED PASS\n");stage=11;
+        fprintf(stderr,"OVERLAY FOCUS RESTORED PASS\n");
+        shortcut(KEY_ENTER,false);stage=11;
+    } else if(stage==11 && server->focused_view!=NULL && server->focused_view->toplevel->title!=NULL &&
+            !strcmp(server->focused_view->toplevel->title,"floating-fixture")) {
+        assert(server->focused_view->floating);
+        shortcut(KEY_T,false);assert(!server->focused_view->floating);
+        shortcut(KEY_SPACE,false);assert(server->focused_view->floating);
+        shortcut(KEY_M,false);assert(server->focused_view->maximized);
+        shortcut(KEY_T,false);assert(server->focused_view->floating && !server->focused_view->maximized);
+        shortcut(KEY_F,false);assert(server->focused_view->fullscreen);
+        shortcut(KEY_T,false);assert(server->focused_view->floating && !server->focused_view->fullscreen);
+        fprintf(stderr,"FLOATING DEFAULT AND SHORTCUTS PASS\n");stage=12;
+    } else if(stage==12 && server->config.use_super) {
+        assert(keyboard.repeat_info.rate==40 && keyboard.repeat_info.delay==250);
+        struct madway_view *view=server->focused_view;
+        assert(view!=NULL && view->floating);
+        shortcut(KEY_T,false);assert(view->floating); // Old modifier is no longer consumed.
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_T,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_T,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(!view->floating);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_T,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_T,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(view->floating);
+        fprintf(stderr,"LIVE INPUT SETTINGS PASS\n");stage=13;
+    } else if(stage==13 && getenv("MADWAY_TEST_HOTPLUG")!=NULL && access(getenv("MADWAY_TEST_HOTPLUG"),F_OK)==0) {
+        wlr_multi_for_each_backend(server->backend,find_headless,NULL);
+        assert(headless!=NULL);
+        hotplug_output=wlr_headless_add_output(headless,800,600);
+        assert(hotplug_output!=NULL);
+        struct madway_output *output;
+        wl_list_for_each(output,&server->outputs,link)
+            if(output->output==hotplug_output) {
+                server->focused_view->output=output;
+                wlr_scene_node_set_position(&server->focused_view->scene_tree->node,output->layout_x+16,output->layout_y+16);
+            }
+        stage=14;
+    } else if(stage==14 && access(getenv("MADWAY_TEST_HOTPLUG"),F_OK)!=0) {
+        wlr_output_destroy(hotplug_output);
+        assert(server->focused_view!=NULL && server->focused_view->output!=NULL);
+        assert(server->focused_view->output->output->enabled);
+        assert(wlr_output_layout_output_at(server->output_layout,
+                server->focused_view->scene_tree->node.x+16,server->focused_view->scene_tree->node.y+8)!=NULL);
+        fprintf(stderr,"OUTPUT HOTPLUG AND WINDOW RECOVERY PASS\n");stage=15;
+    } else if(stage==15 && !server->config.default_floating && server->config.master_percent==60 &&
+            server->focused_view!=NULL && server->focused_view->toplevel->title!=NULL &&
+            !strcmp(server->focused_view->toplevel->title,"floating-fixture")) {
+        previous_view=server->focused_view;
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);stage=16;
+    } else if(stage==16 && server->focused_view!=NULL && server->focused_view!=previous_view) {
+        assert(!server->focused_view->floating);
+        fprintf(stderr,"NEW WINDOW POLICY SETTINGS PASS\n");
+        struct madway_output *output=wl_container_of(server->outputs.prev,output,link);
+        struct wlr_box bounds;
+        wlr_output_layout_get_box(server->output_layout,NULL,&bounds);
+        struct wlr_pointer_motion_absolute_event motion={.pointer=&pointer,.time_msec=100,
+            .x=(output->layout_x+output->usable_area.width-10.0-bounds.x)/bounds.width,
+            .y=(output->layout_y+output->usable_area.height-10.0-bounds.y)/bounds.height};
+        wl_signal_emit_mutable(&pointer.events.motion_absolute,&motion);
+        for(int pressed=1;pressed>=0;--pressed) {
+            struct wlr_pointer_button_event button={.pointer=&pointer,.time_msec=100,.button=BTN_RIGHT,
+                .state=pressed?WL_POINTER_BUTTON_STATE_PRESSED:WL_POINTER_BUTTON_STATE_RELEASED};
+            wlr_pointer_notify_button(&pointer,&button);
+        }
+        stage=17;
+    } else if(stage==17 && server->keyboard_layer!=NULL &&
+            !strcmp(server->keyboard_layer->surface->namespace,"madway-menu")) {
+        assert(server->keyboard_layer->surface->current.exclusive_zone==-1);
+        for(int i=0;i<4;++i) {key(KEY_DOWN,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_DOWN,WL_KEYBOARD_KEY_STATE_RELEASED);}
+        key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_RELEASED);
+        stage=18;
+    } else if(stage==18) {
+        key(KEY_DOWN,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_DOWN,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_RELEASED);stage=19;
+    } else if(stage==19 && server->keyboard_layer==NULL && server->focused_view!=NULL && server->focused_view->floating) {
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_F,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_F,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+        assert(server->focused_view->fullscreen);
+        struct madway_layer *layer;
+        wl_list_for_each(layer,&server->layers,link)
+            if(!strcmp(layer->surface->namespace,"madway-panel") && layer->surface->output==server->focused_view->output->output)
+                assert(!layer->tree->node.enabled);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_PRESSED);
+        key(KEY_F,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_F,WL_KEYBOARD_KEY_STATE_RELEASED);
+        key(KEY_LEFTMETA,WL_KEYBOARD_KEY_STATE_RELEASED);
+        fprintf(stderr,"DESKTOP MENU ACTION AND FULLSCREEN PANEL PASS\n");stage=20;
+    } else if(stage==20) {
+        bool panels=false;struct madway_layer *layer;
+        wl_list_for_each(layer,&server->layers,link)
+            if(layer->mapped && !strcmp(layer->surface->namespace,"madway-panel"))panels=true;
+        if(!panels) {
+            struct madway_output *output;
+            wl_list_for_each(output,&server->outputs,link) {
+                int w,h;wlr_output_effective_resolution(output->output,&w,&h);
+                assert(output->usable_area.height==h);
+            }
+            fprintf(stderr,"PANEL TOGGLE OFF PASS\n");stage=21;
+        }
+    } else if(stage==21) {
+        unsigned panels=0;struct madway_layer *layer;
+        wl_list_for_each(layer,&server->layers,link)
+            if(layer->mapped && !strcmp(layer->surface->namespace,"madway-panel") && layer->surface->current.exclusive_zone==22)++panels;
+        if(panels==(unsigned)wl_list_length(&server->outputs)) {
+            struct madway_output *output;
+            wl_list_for_each(output,&server->outputs,link) {
+                int w,h;wlr_output_effective_resolution(output->output,&w,&h);
+                assert(output->usable_area.height==h-22);
+            }
+            fprintf(stderr,"PANEL HEIGHT RELOAD PASS\n");stage=22;
+        }
     }
     wl_event_source_timer_update(timer,25);return 0;
 }
