@@ -12,16 +12,19 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('GtkLayerShell', '0.1')
 from gi.repository import Gtk, Gdk, Gio, GLib, GtkLayerShell as Layer
+gi.require_version('GdkPixbuf','2.0')
+from gi.repository import GdkPixbuf
 
 api = runpy.run_path(str(Path(__file__).resolve().with_name('madway-shell')))
 action = api['action']
 settings = api['settings']
 runtime_directory = api['runtime_directory']
 PAGES = api['SETTINGS_PAGES']
-MENU_PAGES = ('Desktop', 'Settings', 'Window', 'Workspaces', 'Audio', 'Status', 'Clock', 'Session')
+MENU_PAGES = ('Desktop', 'Settings', 'Window', 'Workspaces', 'Audio', 'Status', 'Clock', 'Session', 'Demoscenes', 'Battery', 'Screenshot')
 CSS = b'''
 * { font-family: monospace; font-size: 10px; border-radius: 0; }
 window { background: #000000; color: #c8c8c8; }
+window.menu-popup, window.menu-popup decoration { background: transparent; padding: 0; margin: 0; border: 0; box-shadow: none; }
 button { min-width: 0; min-height: 0; padding: 0 4px; margin: 0; border: 0; background: transparent; color: #c8c8c8; box-shadow: none; }
 button:hover, button:focus, button.selected { background: #202020; color: #ffffff; }
 button.brand { color: #eeeeee; }
@@ -30,7 +33,11 @@ button.brand { color: #eeeeee; }
 .bar.left { border-right: 1px solid #282828; }
 .bar.right { border-left: 1px solid #282828; }
 .bar.left button, .bar.right button { padding: 2px 0; }
-.menu { background-color: #080808; color: #c8c8c8; border: 1px solid #303030; padding: 1px; }
+button.battery-low { background: #3d2e07; }
+button.battery-low label { color: #ffd16b; }
+button.battery-critical { background: #5d1212; }
+button.battery-critical label { color: #ffb4aa; }
+.menu { background-color: #080808; color: #c8c8c8; border: 1px solid #303030; padding: 1px; margin: 0; }
 .menu button { padding: 2px 5px; }
 .menu label { color: #c8c8c8; }
 .menu .menu-title { color: #eeeeee; padding: 2px 5px; }
@@ -43,6 +50,8 @@ scale { padding: 2px 4px; min-height: 12px; }
 scale trough { min-height: 3px; background: #303030; background-image: none; border: 0; box-shadow: none; }
 scale highlight { background: #b0b0b0; background-image: none; border: 0; box-shadow: none; }
 scale slider { min-width: 7px; min-height: 10px; background: #dddddd; background-image: none; border: 0; padding: 0; margin: 0; box-shadow: none; }
+.audio-row { padding: 5px; border-bottom: 1px solid #303030; }
+.audio-row scale { min-height: 20px; }
 separator { background: #282828; min-width: 1px; min-height: 1px; }
 '''
 
@@ -58,6 +67,8 @@ def send(name, **values):
 def layer_window(namespace, monitor, layer, keyboard):
     window = Gtk.Window()
     window.set_decorated(False)
+    visual = window.get_screen().get_rgba_visual()
+    if visual is not None:window.set_visual(visual)
     Layer.init_for_window(window)
     Layer.set_namespace(window, namespace)
     Layer.set_monitor(window, monitor)
@@ -69,6 +80,7 @@ def layer_window(namespace, monitor, layer, keyboard):
 class TopBar:
     def __init__(self):
         self.config = settings()
+        self.eau = self.config.get('appearance', 'theme') in {'gershwin','gershwin-dark'}
         self.display = Gdk.Display.get_default()
         self.bars = []
         self.last_cpu = None
@@ -95,7 +107,7 @@ class TopBar:
         position = self.config.get('panel', 'position')
         if position not in ('top', 'bottom', 'left', 'right'):position = 'top'
         vertical = position in ('left', 'right')
-        arrow = '▴' if position == 'bottom' else '▾'
+        arrow = '' if self.eau else '▴' if position == 'bottom' else '▾'
         for index in range(self.display.get_n_monitors()):
             monitor = self.display.get_monitor(index)
             if monitor is None:continue
@@ -116,55 +128,146 @@ class TopBar:
                 widget = Gtk.Button(label=label)
                 widget.set_can_focus(False)
                 widget.set_tooltip_text(tooltip or page)
-                def popup(widget):
+                def popup(widget, window=window):
                     bounds = monitor.get_geometry()
                     allocation = widget.get_allocation()
                     x, y = bounds.x+allocation.x, bounds.y+allocation.y
-                    if position == 'top':y = bounds.y+height
-                    elif position == 'bottom':y = bounds.y+bounds.height-height
-                    elif position == 'left':x = bounds.x+height
-                    else:x = bounds.x+bounds.width-height
+                    if position == 'top':y = bounds.y+window.get_allocated_height()
+                    elif position == 'bottom':y = bounds.y+bounds.height-window.get_allocated_height()
+                    elif position == 'left':x = bounds.x+window.get_allocated_width()
+                    else:x = bounds.x+bounds.width-window.get_allocated_width()
                     send('panel-menu', page=page, x=x, y=y, edge=position,
                          detail=widget.get_tooltip_text() if vertical else widget.get_label())
                 widget.connect('clicked', popup)
                 box.pack_start(widget, expand, expand, 0)
                 return widget
-            brand = button('M' if vertical else 'madway '+arrow, 'Desktop', tooltip='Applications, commands and settings')
+            name=api['panel_label'](self.config)
+            brand = button(name[:1].upper() if vertical else name+(' '+arrow if arrow else ''), 'Desktop', tooltip=name+' · Applications, commands and settings')
+            brand.get_child().set_ellipsize(3);brand.get_child().set_max_width_chars(18)
             brand.get_style_context().add_class('brand')
             workspace = button('1 ▾', 'Workspaces')
-            title = button('Desktop ▾', 'Window', expand=True, tooltip='Active window actions')
+            title = button('Desktop ▾', 'Window', tooltip='Active window actions')
+            title.get_child().set_max_width_chars(18)
+            if self.eau:
+                title.get_style_context().add_class('application')
+                box.reorder_child(title, 1)
             title.get_child().set_xalign(.5 if vertical else 0)
             title.get_child().set_ellipsize(3)
+            # Keep every minimized window reachable without growing the panel.
+            minimized = Gtk.ScrolledWindow()
+            minimized.set_policy(Gtk.PolicyType.NEVER if vertical else Gtk.PolicyType.EXTERNAL,
+                                 Gtk.PolicyType.EXTERNAL if vertical else Gtk.PolicyType.NEVER)
+            minimized.set_overlay_scrolling(False)
+            minimized.add_events(Gdk.EventMask.SCROLL_MASK | Gdk.EventMask.SMOOTH_SCROLL_MASK)
+            minimized.connect('scroll-event', self.scroll_minimized, vertical)
+            minimized.set_no_show_all(True)
+            minimized_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL if vertical else Gtk.Orientation.HORIZONTAL, spacing=0)
+            minimized.add(minimized_box)
+            minimized.set_size_request(-1 if vertical else 80, 64 if vertical else -1)
+            box.pack_start(minimized, True, True, 0)
+            box.reorder_child(minimized, box.get_children().index(workspace)+1)
+            spacer=Gtk.Box();spacer.set_no_show_all(True)
+            box.pack_start(spacer,True,True,0)
             metrics = button('', 'Status', tooltip='System status')
             metrics.set_no_show_all(True)
             audio = button('V' if vertical else 'Audio '+arrow, 'Audio')
+            if self.eau:
+                audio.set_label('')
+                audio.set_always_show_image(True)
+                icon=Gtk.Image.new_from_icon_name('audio-volume-high-symbolic',Gtk.IconSize.MENU)
+                icon.set_pixel_size(18);audio.set_image(icon)
+            battery = button('', 'Battery', tooltip='Battery and charging status')
+            battery.set_no_show_all(True)
             clock = button('', 'Clock')
             clock.set_no_show_all(True)
             session = button('⏻' if vertical else 'Session '+arrow, 'Session')
             session.set_no_show_all(True)
             self.bars.append(dict(window=window, title=title, workspace=workspace, metrics=metrics,
-                audio=audio, clock=clock, monitor=monitor, session=session, vertical=vertical, position=position, arrow=arrow, buttons=box.get_children()))
+                audio=audio, battery=battery, clock=clock, monitor=monitor, session=session, vertical=vertical, position=position, arrow=arrow,
+                minimized=minimized, minimized_box=minimized_box, minimized_signature=None, empty_space=spacer,
+                buttons=[widget for widget in box.get_children() if isinstance(widget, Gtk.Button)]))
             window.show_all()
         self.refresh()
         return False
+
+    @staticmethod
+    def scroll_minimized(widget, event, vertical):
+        adjustment = widget.get_vadjustment() if vertical else widget.get_hadjustment()
+        maximum = max(0, adjustment.get_upper()-adjustment.get_page_size())
+        if maximum <= 0:return False
+        if event.direction == Gdk.ScrollDirection.SMOOTH:
+            valid, dx, dy = event.get_scroll_deltas()
+            if not valid:return False
+            delta = dy if vertical or not dx else dx
+        else:
+            delta = -1 if event.direction in (Gdk.ScrollDirection.UP, Gdk.ScrollDirection.LEFT) else 1
+        adjustment.set_value(max(0, min(maximum, adjustment.get_value()+32*delta)))
+        return True
 
     def refresh(self):
         try:
             state = json.loads((runtime_directory()/'desktop.json').read_text())
         except (OSError, ValueError):
             state = {}
+        power = api['power_snapshot']()
         for bar in self.bars:
             bounds = bar['monitor'].get_geometry()
             vertical = bar['vertical']
+            rows = state.get('windows', [])
+            signature = tuple((row['id'], row.get('title') or 'Untitled',row.get('app_id',''),row.get('minimized',False),row.get('focused',False)) for row in rows)
+            if signature != bar['minimized_signature']:
+                bar['minimized_signature'] = signature
+                for child in bar['minimized_box'].get_children():child.destroy()
+                for identity, title, app_id, hidden, focused in signature:
+                    mode=self.config.get('panel','tasks')
+                    name=app_id.removeprefix('org.').split('.')[-1] or title
+                    try:app=Gio.DesktopAppInfo.new(app_id+'.desktop') if app_id else None
+                    except (TypeError,GLib.Error):app=None
+                    if app:name=app.get_display_name()
+                    widget = Gtk.Button(label='' if mode=='icons' else name)
+                    label=widget.get_child()
+                    label.set_ellipsize(3);label.set_max_width_chars(20)
+                    icon=app.get_icon() if app else Gio.ThemedIcon.new('application-x-executable')
+                    image=Gtk.Image.new_from_gicon(icon or Gio.ThemedIcon.new('application-x-executable'),Gtk.IconSize.MENU)
+                    image.set_pixel_size(16)
+                    if mode=='icons':widget.set_image(image);widget.set_always_show_image(True)
+                    if vertical and mode=='names':label.set_angle(90)
+                    widget.set_can_focus(False)
+                    if hidden:widget.get_style_context().add_class('minimized')
+                    if focused:widget.get_style_context().add_class('selected')
+                    widget.set_tooltip_text(('Restore ' if hidden else 'Minimize ' if focused else 'Focus ')+title+' · Scroll for more applications')
+                    widget.connect('clicked', lambda widget, identity=identity:send('taskbar-toggle', id=identity))
+                    bar['minimized_box'].pack_start(widget, False, False, 0)
+                    widget.show_all()
+                    if not vertical and mode=='names':
+                        widget.set_size_request(min(170, max(48, widget.get_preferred_width()[1])), -1)
+                bar['minimized_box'].show_all()
+            bar['minimized'].set_visible(bool(rows))
+            bar['empty_space'].set_visible(not rows)
             width = bounds.height if vertical else bounds.width
-            bar['session'].set_visible(width >= 500)
+            bar['session'].set_visible(width >= 500 and not self.eau)
             bar['metrics'].set_visible(width >= 1000 and self.config.getboolean('panel', 'metrics'))
             bar['clock'].set_visible(self.config.getboolean('panel', 'clock'))
-            bar['title'].set_label('W' if vertical else (state.get('title') or 'Desktop')+' '+bar['arrow'])
+            title = (state.get('app_id') or state.get('title') or 'Desktop') if self.eau else state.get('title') or 'Desktop'
+            if self.eau:title = title.removeprefix('org.').split('.')[-1]
+            bar['title'].set_label('W' if vertical else (title+' '+bar['arrow']).strip())
             bar['title'].set_tooltip_text(state.get('title') or 'Window actions')
             bar['workspace'].set_label(str(state.get('workspace', 0)+1)+('' if vertical else ' '+bar['arrow']))
-            bar['clock'].set_label(datetime.now().astimezone().strftime('%H:%M')+('' if vertical else ' '+bar['arrow']))
+            bar['clock'].set_label(datetime.now().astimezone().strftime('%a %H:%M' if self.eau and not vertical else '%H:%M')+('' if vertical else ' '+bar['arrow']))
             bar['clock'].get_child().set_angle(90 if vertical else 0)
+            widget = bar['battery']
+            widget.set_visible(power.get('present', False) and self.config.getboolean('power','show_battery'))
+            percent=power.get('percent')
+            level='?' if percent is None else str(percent)+'%'
+            suffix=' +' if power.get('status')=='Charging' else ' AC' if power.get('on_ac') else ''
+            severity=api['battery_severity'](power,self.config.getint('power','low_percent'),self.config.getint('power','critical_percent'))
+            widget.set_label(('' if vertical or self.eau else 'BAT ')+level+suffix+(' !' if severity else '')+('' if vertical else ' '+bar['arrow']))
+            widget.get_child().set_angle(90 if vertical else 0)
+            widget.set_tooltip_text(level+' — '+power.get('status','Unknown'))
+            context=widget.get_style_context()
+            for name,active in (('battery-low',severity==1),('battery-critical',severity==2)):
+                if active:context.add_class(name)
+                else:context.remove_class(name)
         return True
 
     def metrics(self):
@@ -198,7 +301,11 @@ class TopBar:
         for bar in self.bars:
             bar['metrics'].set_label(('S' if bar['vertical'] else telemetry+' '+bar['arrow']) if self.config.getboolean('panel', 'metrics') else '')
             bar['metrics'].set_tooltip_text(telemetry or 'System status')
-            bar['audio'].set_label('V' if bar['vertical'] else audio+' '+bar['arrow'])
+            if self.eau:
+                icon=bar['audio'].get_image()
+                icon.set_from_icon_name('audio-volume-muted-symbolic' if audio=='MUTE' else 'audio-volume-high-symbolic',Gtk.IconSize.MENU)
+                icon.set_pixel_size(18)
+            else:bar['audio'].set_label('V' if bar['vertical'] else audio+' '+bar['arrow'])
             bar['audio'].set_tooltip_text(audio)
         return False
 
@@ -283,11 +390,13 @@ class AudioMixer:
                 if not rows:self.box.pack_start(Gtk.Label(label='None active', xalign=0), False, False, 0)
                 for row in rows:
                     key = (row['kind'], row['id'])
-                    line = Gtk.Box(spacing=2)
+                    card=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
+                    card.get_style_context().add_class('audio-row')
                     label = Gtk.Label(label=row['label'], xalign=0)
-                    label.set_ellipsize(3);label.set_max_width_chars(30)
+                    label.set_ellipsize(3);label.set_max_width_chars(32)
                     label.set_tooltip_text(row['label'])
-                    line.pack_start(label, True, True, 3)
+                    card.pack_start(label,False,False,0)
+                    line = Gtk.Box(spacing=6)
                     default = None
                     if row['kind'] in ('sink', 'source'):
                         default = Gtk.Button(label='Use')
@@ -296,14 +405,15 @@ class AudioMixer:
                     mute = Gtk.CheckButton(label='Mute')
                     handler = mute.connect('toggled', lambda widget, key=key:self.edit(key, 'mute', widget.get_active()))
                     line.pack_start(mute, False, False, 0)
-                    self.box.pack_start(line, False, False, 0)
+                    card.pack_start(line,False,False,0)
                     slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
                     slider.set_digits(0);slider.set_value_pos(Gtk.PositionType.RIGHT)
                     slider.set_sensitive(row['adjustable'])
                     volume_handler = slider.connect('value-changed', lambda widget, key=key:self.edit(key, 'volume', round(widget.get_value())))
                     slider.connect('button-press-event', lambda widget, event, key=key:self.dragging.add(key) or False)
                     slider.connect('button-release-event', lambda widget, event, key=key:self.release(key))
-                    self.box.pack_start(slider, False, False, 0)
+                    card.pack_start(slider,False,False,0)
+                    self.box.pack_start(card,False,False,0)
                     self.rows[key] = (slider, volume_handler, mute, handler, default)
             self.box.show_all()
             height = self.box.get_preferred_height()[1]
@@ -333,6 +443,7 @@ class DesktopMenu:
                 monitor = candidate;break
         rect = monitor.get_geometry()
         self.window = layer_window('madway-menu', monitor, Layer.Layer.OVERLAY, Layer.KeyboardMode.EXCLUSIVE)
+        self.window.get_style_context().add_class('menu-popup')
         self.window.set_resizable(False)
         Layer.set_exclusive_zone(self.window, -1)
         Layer.set_anchor(self.window, Layer.Edge.TOP, True)
@@ -344,6 +455,7 @@ class DesktopMenu:
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.box.get_style_context().add_class('menu')
         self.box.set_size_request(200, -1)
+        self.box.set_valign(Gtk.Align.END if edge == 'bottom' else Gtk.Align.START)
         self.container.pack_start(self.box, True, True, 0)
         self.submenu = None
         self.hover_source = 0
@@ -396,6 +508,7 @@ class DesktopMenu:
         self.submenu = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.submenu.get_style_context().add_class('menu')
         self.submenu.set_size_request(200, -1)
+        self.submenu.set_valign(Gtk.Align.END if self.edge == 'bottom' else Gtk.Align.START)
         # Keep the popup entirely on its output, including near the right edge.
         left = max(0, min(self.origin_x, self.available_width-404))
         Layer.set_margin(self.window, Layer.Edge.LEFT, left)
@@ -406,6 +519,7 @@ class DesktopMenu:
         self.render_page(page)
         self.box = original
         self.container.show_all()
+        self.window.resize(1, 1)
 
     def activate(self, name, **values):
         send(name, **values)
@@ -422,7 +536,7 @@ class DesktopMenu:
         for widget in self.box.get_children():
             widget.destroy()
         self.buttons.clear()
-        label = Gtk.Label(label='madway' if page == 'Desktop' else page, xalign=0)
+        label = Gtk.Label(label=api['panel_label']() if page == 'Desktop' else page, xalign=0)
         label.get_style_context().add_class('menu-title')
         self.box.pack_start(label, False, False, 0)
         def item(label, callback, enabled=True, submenu=None):
@@ -443,10 +557,25 @@ class DesktopMenu:
         if page == 'Desktop':
             item('Applications ›', lambda: self.open_submenu('Applications'), submenu='Applications')
             item('Run command…', lambda: self.activate('run'))
-            item('Kitty terminal', lambda: self.activate('terminal'))
+            item('Konsole terminal', lambda: self.activate('terminal'))
             for label in ('Settings', 'Window', 'Workspaces', 'Session'):
                 item(label+' ›', lambda label=label: self.open_submenu(label), submenu=label)
             item('Reload settings', lambda: self.activate('apply'))
+            item('Demoscenes ›', lambda:self.open_submenu('Demoscenes'), submenu='Demoscenes')
+            item('Screenshot ›',lambda:self.open_submenu('Screenshot'),submenu='Screenshot')
+            visible=api['settings']().getboolean('desktop','icons')
+            item('Hide desktop icons' if visible else 'Show desktop icons',lambda:self.activate('toggle-desktop-icons'))
+        elif page == 'Screenshot':
+            item('Entire desktop · Print',lambda:self.activate('screenshot'))
+            item('Select area · Shift+Print',lambda:self.activate('screenshot-region'))
+            item('Copy desktop · Ctrl+Print',lambda:self.activate('screenshot-clipboard'))
+        elif page == 'Demoscenes':
+            scenes = api['demoscenes']()
+            if not scenes:item('No local demoscenes installed', lambda:None, enabled=False)
+            for identity, entry in scenes.items():
+                item(entry['title'], lambda identity=identity:self.activate('overlay-start', scene=identity))
+            item('Stop demoscene', lambda:self.activate('overlay-stop'))
+            item('Demoscene settings…', lambda:self.activate('settings-page', page='Session'))
         elif page == 'Applications':
             item('Search applications…', lambda:self.activate('launcher'))
             scroll = Gtk.ScrolledWindow()
@@ -475,9 +604,12 @@ class DesktopMenu:
             except (OSError, ValueError):
                 state = {}
             has_window = state.get('has_window', bool(state.get('title')))
-            for label, command in [('Floating / tiled', 'floating'), ('Maximize / restore', 'maximize'), ('Fullscreen', 'fullscreen'), ('Close window', 'close')]:
+            for label, command in [('Floating / tiled', 'floating'), ('Minimize', 'minimize'), ('Maximize / restore', 'maximize'), ('Fullscreen', 'fullscreen'), ('Close window', 'close')]:
                 item(label, lambda command=command: self.activate('window-'+command), enabled=has_window)
             item(('✓ ' if state.get('keep_above') else '')+'Keep above others', lambda:self.activate('window-above'), enabled=has_window)
+            for row in state.get('windows', []):
+                if row.get('minimized'):
+                    item('Restore '+(row.get('title') or 'window'), lambda identity=row['id']:self.activate('switcher-select', id=identity))
         elif page == 'Workspaces':
             for number in range(9):
                 item('Workspace '+str(number+1), lambda number=number: self.activate('workspace', value=number))
@@ -497,13 +629,42 @@ class DesktopMenu:
             self.box.pack_start(label, False, False, 0)
             item('Panel options…', lambda: self.activate('settings-page', page='Panel'))
             item('Session options…', lambda: self.activate('settings-page', page='Session'))
+        elif page == 'Battery':
+            state=api['power_snapshot']()
+            def info(text):
+                label=Gtk.Label(label=text,xalign=0,wrap=True)
+                label.set_max_width_chars(32);label.get_style_context().add_class('menu-info')
+                self.box.pack_start(label,False,False,0)
+            if not state.get('present'):info('No system battery detected')
+            else:
+                percent=state.get('percent')
+                info(('Level unavailable' if percent is None else str(percent)+'%')+' — '+state.get('status','Unknown'))
+                info('External power: '+('Connected' if state.get('on_ac') is True else 'Disconnected' if state.get('on_ac') is False else 'Unknown'))
+                seconds=state.get('seconds')
+                if seconds is not None:
+                    minutes=round(seconds/60);hours,minutes=divmod(minutes,60)
+                    duration=(str(hours)+'h ' if hours else '')+str(minutes)+'m'
+                    info('Estimated '+duration+(' to full' if state.get('status')=='Charging' else ' remaining'))
+                if len(state.get('batteries',[]))>1:
+                    for row in state['batteries']:
+                        info(row['name']+': '+('?' if row['percent'] is None else str(row['percent'])+'%')+' — '+row['status'])
+            def refresh_power():
+                send('power-refresh')
+                def reload():
+                    if self.window.get_visible() and self.page=='Battery':self.show_page('Battery')
+                    return False
+                GLib.timeout_add(250,reload)
+            item('Refresh',refresh_power)
+            item('Power settings…',lambda:self.activate('settings-page',page='Power'))
         elif page == 'Clock':
             label = Gtk.Label(label=datetime.now().astimezone().strftime('%a %d %b %Y'), xalign=0)
             label.get_style_context().add_class('menu-info')
             self.box.pack_start(label, False, False, 0)
             item('Clock options…', lambda: self.activate('settings-page', page='Panel'))
         elif page == 'Session':
+            item('Lock screen',lambda:self.activate('lock'))
             item('Session settings…', lambda: self.activate('settings-page', page='Session'))
+            item('Sleep…',lambda:self.activate('settings-page',page='Power'))
             item('Log out', lambda: self.activate('logout'))
             # Power-off remains behind the settings window's explicit confirmation.
             item('Shut down computer…', lambda: self.activate('settings-page', page='Session'))
@@ -550,9 +711,13 @@ class WindowSwitcher:
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.box.get_style_context().add_class('menu')
         self.window.add(self.box)
-        self.window.set_size_request(300, -1)
+        bounds=monitor.get_geometry()
+        self.columns=max(1,min(4,(bounds.width-32)//208))
+        self.max_height=max(160,min(460,bounds.height-64))
+        self.window.set_size_request(self.columns*208+12, -1)
         self.window.connect('destroy', Gtk.main_quit)
         self.signature = None
+        self.previews={}
         self.refresh()
         GLib.timeout_add(45, self.refresh)
 
@@ -562,26 +727,54 @@ class WindowSwitcher:
         if not state.get('switcher'):
             self.window.destroy();return False
         rows = state.get('windows', [])
-        signature = tuple((row['id'], row['title'], row['focused']) for row in rows)
+        signature = tuple((row['id'], row['title'], row['focused'], row.get('minimized',False),row.get('preview',0)) for row in rows)
         if signature != self.signature:
             self.signature = signature
+            columns=max(1,min(self.columns,len(rows)))
+            self.window.set_size_request(columns*208+12,-1)
             for child in self.box.get_children():child.destroy()
             title = Gtk.Label(label='Windows · release modifier to select', xalign=0)
             title.get_style_context().add_class('menu-title');self.box.add(title)
             scroll = Gtk.ScrolledWindow()
             scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scroll.set_max_content_height(320);scroll.set_propagate_natural_height(True)
-            items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0);scroll.add(items)
+            scroll.set_max_content_height(self.max_height);scroll.set_propagate_natural_height(True)
+            items = Gtk.Grid(column_spacing=4,row_spacing=4,margin=4);scroll.add(items)
             if not rows:items.add(Gtk.Label(label='No windows on this workspace'))
-            for row in rows:
-                button = Gtk.Button(label=('▸ ' if row['focused'] else '  ')+(row['title'] or 'Untitled'))
-                button.get_child().set_xalign(0);button.get_child().set_ellipsize(3);button.get_child().set_max_width_chars(50)
+            selected=None
+            self.previews={key:value for key,value in self.previews.items() if key in {(row['id'],row.get('preview',0)) for row in rows}}
+            for index,row in enumerate(rows):
+                button = Gtk.Button()
+                button.get_style_context().add_class('switcher-card')
+                card=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4)
+                button.add(card)
+                key=(row['id'],row.get('preview',0))
+                pixbuf=self.previews.get(key)
+                if pixbuf is None and row.get('preview'):
+                    try:
+                        pixbuf=GdkPixbuf.Pixbuf.new_from_file_at_scale(str(runtime_directory()/'previews'/f"{row['id']}.png"),192,128,True)
+                        self.previews[key]=pixbuf
+                    except GLib.Error:pass
+                image=Gtk.Image.new_from_pixbuf(pixbuf) if pixbuf else Gtk.Image.new_from_icon_name('application-x-executable',Gtk.IconSize.DIALOG)
+                image.set_size_request(192,128);card.pack_start(image,False,False,0)
+                label=Gtk.Label(label=(row['title'] or 'Untitled')+(' · minimized' if row.get('minimized') else ''))
+                label.set_ellipsize(3);label.set_max_width_chars(24)
+                card.pack_start(label,False,False,0)
+                button.set_tooltip_text(row['title'] or 'Untitled')
                 button.connect('clicked', lambda widget, identity=row['id']:send('switcher-select', id=identity))
-                if row['focused']:button.get_style_context().add_class('selected')
-                items.add(button)
+                if row['focused']:button.get_style_context().add_class('selected');selected=button
+                items.attach(button,index%columns,index//columns,1,1)
             self.box.add(scroll)
             self.window.show_all()
-            scroll.set_min_content_height(min(320, items.get_preferred_height()[1]))
+            scroll.set_min_content_height(min(self.max_height, items.get_preferred_height()[1]))
+            if selected:
+                def reveal():
+                    if not selected.get_parent():return False
+                    position=selected.translate_coordinates(items,0,0)
+                    if position:
+                        adjustment=scroll.get_vadjustment();top=position[1];bottom=top+selected.get_allocated_height()
+                        adjustment.set_value(max(0,min(top,bottom-adjustment.get_page_size())))
+                    return False
+                GLib.idle_add(reveal)
         return True
 
 

@@ -30,7 +30,7 @@ static int arrange(void *unused)
         if(!view->mapped)continue;
         const char *id=view->toplevel->app_id,*title=view->toplevel->title;
         int x=28,y=54,w=700,h=420;
-        if(id && !strcmp(id,"org.madway.Settings")){x=28;y=510;w=620;h=340;}
+        if(id && !strcmp(id,"org.madway.Settings")){x=28;y=510;w=640;h=440;}
         else if((id && strstr(id,"firefox")) || (title && strstr(title,"Firefox"))){x=760;y=54;w=800;h=650;}
         wlr_scene_node_set_position(&view->scene_tree->node,x,y);
         if(view->toplevel->base->geometry.width!=w || view->toplevel->base->geometry.height!=h)

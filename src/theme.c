@@ -26,6 +26,8 @@ void madway_theme_load(struct madway_config *config, const char *name)
     if (path == NULL || !g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
         g_key_file_load_from_file(file, MADWAY_THEME_SOURCE, G_KEY_FILE_NONE, NULL);
     const char *theme = name != NULL && g_key_file_has_group(file, name) ? name : "black";
+    config->eau_dark = strcmp(theme, "gershwin-dark") == 0;
+    config->eau = strcmp(theme, "gershwin") == 0 || config->eau_dark;
     color(file, theme, "surface", config->surface, "#080808");
     color(file, theme, "active", config->active, "#202020");
     color(file, theme, "text", config->text, "#c8c8c8");

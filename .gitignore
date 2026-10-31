@@ -32,5 +32,17 @@ __pycache__/
 
 # Personal media assets (not distributed with madway)
 /longhorn assets/
+# Original Gershwin wallpaper, retained locally with its provenance.
+/share/madway/wallpapers/Abstract Blue.png
 
 COMMIT_NOTES.md
+# Local demoscenes: implementation, media, shaders, tests and previews are private.
+/extras/demoscene/
+/tests/demoscene*
+/docs/demoscene*
+**/demoscene-preview*
+**/saturn-preview*
+
+/share/madway/demoscenes.json
+
+/madway-demoscene*

@@ -15,8 +15,12 @@ struct madway_view
 {
     struct madway_server *server;
     struct madway_output *output;
+    struct wlr_foreign_toplevel_handle_v1 *task;
+    struct wl_listener task_activate, task_minimize, task_maximize, task_fullscreen, task_close;
     unsigned workspace, id;
-    bool mapped, floating, compact_frame, keep_above;
+    unsigned preview_serial;
+    bool mapped, floating, compact_frame, keep_above, desktop_overlay, minimized;
+    int frame_hover;
     double tile_weight;
     struct wlr_box tile_geometry;
     struct wlr_box floating_geometry;
@@ -27,6 +31,8 @@ struct madway_view
     struct wlr_scene_tree *content_tree;
     struct wlr_scene_rect *borders[4];
     struct wlr_scene_buffer *title_buffer;
+    struct wlr_scene_tree *shadow_tree;
+    struct wlr_scene_buffer *shadows[8];
     char *frame_title;
     int frame_width, frame_height, frame_title_height;
     bool frame_active, frame_visible, decorated, maximized, fullscreen;
@@ -41,10 +47,12 @@ struct madway_view
     struct wl_listener unmap;
     struct wl_listener destroy;
     struct wl_listener request_maximize;
+    struct wl_listener request_minimize;
     struct wl_listener request_fullscreen;
     struct wl_listener request_move;
     struct wl_listener request_resize;
     struct wl_listener set_title;
+    struct wl_listener set_app_id;
 };
 
 

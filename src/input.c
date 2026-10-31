@@ -1,4 +1,9 @@
 #include "input.h"
+#include "dock.h"
+#include "devices.h"
+#include "drag.h"
+#include "transition.h"
+#include "motion.h"
 #include "main.h"
 #include "view.h"
 #include "decoration.h"
@@ -6,6 +11,8 @@
 #include "workspace.h"
 #include "layer.h"
 #include "session.h"
+#include "power.h"
+#include "lock.h"
 
 #include <stdlib.h>
 #include <wlr/backend/session.h>
@@ -35,6 +42,9 @@ struct madway_keyboard
     struct wl_listener modifiers;
     struct wl_listener destroy;
     bool consumed_keys[KEY_CNT];
+    struct xkb_keymap *original_keymap;
+    bool custom_keymap;
+    char layout[128],variant[128],options[256];
 };
 
 struct madway_pointer
@@ -44,6 +54,29 @@ struct madway_pointer
     struct wl_list link;
     struct wl_listener destroy;
 };
+
+void madway_discard_held_keys(struct madway_server *server)
+{
+    struct madway_keyboard *entry;
+    wl_list_for_each(entry,&server->keyboards,link)
+        for(size_t i=0;i<entry->keyboard->num_keycodes;++i)
+            if(entry->keyboard->keycodes[i]<KEY_CNT)entry->consumed_keys[entry->keyboard->keycodes[i]]=true;
+}
+
+void madway_keyboard_enter(struct madway_server *server,struct wlr_surface *surface)
+{
+    struct wlr_keyboard *keyboard=wlr_seat_get_keyboard(server->seat);
+    struct madway_keyboard *state=NULL,*entry;
+    wl_list_for_each(entry,&server->keyboards,link)if(entry->keyboard==keyboard){state=entry;break;}
+    uint32_t keys[WLR_KEYBOARD_KEYS_CAP];size_t count=0;
+    if(keyboard)for(size_t i=0;i<keyboard->num_keycodes;++i) {
+        uint32_t key=keyboard->keycodes[i];
+        if(state && key<KEY_CNT && state->consumed_keys[key])continue;
+        keys[count++]=key;
+    }
+    struct wlr_keyboard_modifiers modifiers={0};
+    wlr_seat_keyboard_notify_enter(server->seat,surface,count?keys:NULL,count,keyboard?&keyboard->modifiers:&modifiers);
+}
 
 static void set_cursor_shape(struct madway_server *server, const char *name)
 {
@@ -100,6 +133,7 @@ static struct madway_view *view_at(struct madway_server *server, double x, doubl
         struct wlr_surface **surface, double *sx, double *sy)
 {
     *surface = NULL;
+    if(server->locked){*surface=madway_lock_at(server,x,y,sx,sy);return NULL;}
     if (madway_layer_at(server, true, x, y, surface, sx, sy) != NULL) return NULL;
     struct wlr_scene_node *node = wlr_scene_node_at(&server->above_windows->node, x, y, sx, sy);
     if (node == NULL) node = wlr_scene_node_at(&server->windows->node, x, y, sx, sy);
@@ -124,13 +158,16 @@ static struct madway_view *view_at(struct madway_server *server, double x, doubl
 
 static void process_cursor_motion(struct madway_server *server, uint32_t time_msec)
 {
+    madway_drag_update(server);
+    madway_dock_pointer(server);
     if (server->interactive_view != NULL)
     {
         madway_update_interactive(server);
         return;
     }
     struct wlr_seat_pointer_state *pointer = &server->seat->pointer_state;
-    if (pointer->button_count > 0 && pointer->focused_surface != NULL)
+    if(server->locked && wlr_seat_pointer_has_grab(server->seat))wlr_seat_pointer_end_grab(server->seat);
+    if (!server->seat->drag && pointer->button_count > 0 && pointer->focused_surface != NULL)
     {
         // Keep selection drags with the surface where the first button was pressed.
         wlr_seat_pointer_notify_motion(server->seat, time_msec,
@@ -142,6 +179,15 @@ static void process_cursor_motion(struct madway_server *server, uint32_t time_ms
     struct wlr_surface *surface;
     double sx, sy;
     struct madway_view *view = view_at(server, server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+    if (server->config.eau) {
+        struct madway_view *entry;
+        wl_list_for_each(entry, &server->views, link) {
+            int hover = entry == view ? (int)madway_frame_at(entry, server->cursor->x, server->cursor->y) : MADWAY_FRAME_NONE;
+            if (entry->frame_hover == hover) continue;
+            entry->frame_hover = hover;entry->frame_visible = false;
+            madway_frame_update(entry);
+        }
+    }
     if (surface == NULL)
     {
         uint32_t edges = view != NULL ? madway_frame_edges(view, server->cursor->x, server->cursor->y) : 0;
@@ -176,6 +222,7 @@ void madway_rebase_cursor(struct madway_server *server)
 
 void madway_cancel_pointer_grab(struct madway_server *server)
 {
+    madway_drag_cancel(server);
     struct wlr_seat_pointer_state *pointer = &server->seat->pointer_state;
     struct wlr_seat_pointer_button buttons[WLR_POINTER_BUTTONS_CAP];
     size_t count = pointer->button_count;
@@ -197,6 +244,7 @@ void madway_cancel_pointer_grab(struct madway_server *server)
 
 static void focus_pointer_window(struct madway_server *server)
 {
+    if(server->locked)return;
     if (!server->config.focus_follows_mouse || server->switcher_active || server->keyboard_layer != NULL ||
         server->interactive_view != NULL || server->seat->pointer_state.button_count > 0) return;
     struct wlr_surface *surface;
@@ -236,6 +284,9 @@ static void handle_cursor_button(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, cursor_button);
     struct wlr_pointer_button_event *event = data;
+    if (event->state==WL_POINTER_BUTTON_STATE_PRESSED) {
+        madway_transition_cancel_running(server);madway_motion_cancel_running(server);
+    }
     // A host enter can precede its first motion. Never click another output
     // using the previous window's cursor position while awaiting that motion.
     if (event->state == WL_POINTER_BUTTON_STATE_PRESSED &&
@@ -272,6 +323,13 @@ static void handle_cursor_button(struct wl_listener *listener, void *data)
         return;
     }
     process_cursor_motion(server, event->time_msec);
+    if(server->locked) {
+        double sx,sy;
+        struct wlr_surface *surface=madway_lock_at(server,server->cursor->x,server->cursor->y,&sx,&sy);
+        if(surface && event->state==WL_POINTER_BUTTON_STATE_PRESSED)madway_lock_focus(server,surface);
+        if(surface)wlr_seat_pointer_notify_button(server->seat,event->time_msec,event->button,event->state);
+        return;
+    }
     if (event->state == WL_POINTER_BUTTON_STATE_PRESSED &&
         server->seat->pointer_state.button_count == 0)
     {
@@ -293,7 +351,7 @@ static void handle_cursor_button(struct wl_listener *listener, void *data)
             server->keyboard_layer = NULL;
         }
         bool desktop = view == NULL && (surface == NULL || (layer != NULL &&
-                layer->surface->current.layer <= ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM));
+                strcmp(layer->surface->namespace,"madway-desktop") && layer->surface->current.layer <= ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM));
         if (event->button == BTN_RIGHT && desktop)
         {
             madway_session_menu(server, server->cursor->x, server->cursor->y);
@@ -303,7 +361,8 @@ static void handle_cursor_button(struct wl_listener *listener, void *data)
         if (layer != NULL)
         {
             madway_layer_focus(layer);
-            if (layer->surface->current.layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP && server->keyboard_layer == NULL)
+            if (!strcmp(layer->surface->namespace,"madway-desktop") ||
+                (layer->surface->current.layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP && server->keyboard_layer == NULL))
                 madway_focus_view(server, NULL);
         }
         else
@@ -328,6 +387,12 @@ static void handle_cursor_button(struct wl_listener *listener, void *data)
             if (event->button == BTN_LEFT && part == MADWAY_FRAME_MAXIMIZE)
             {
                 madway_set_maximized(view, !view->maximized);
+                server->consumed_button = event->button;
+                return;
+            }
+            if (event->button == BTN_LEFT && part == MADWAY_FRAME_MINIMIZE)
+            {
+                madway_set_minimized(view, true);
                 server->consumed_button = event->button;
                 return;
             }
@@ -362,6 +427,7 @@ static void handle_cursor_axis(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, cursor_axis);
     struct wlr_pointer_axis_event *event = data;
+    if(server->locked)process_cursor_motion(server,event->time_msec);
     if (!pointer_position_valid(server, event->pointer)) return;
     wlr_seat_pointer_notify_axis(server->seat, event->time_msec, event->orientation,
             event->delta, event->delta_discrete, event->source, event->relative_direction);
@@ -390,6 +456,7 @@ static void handle_request_selection(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, request_selection);
     struct wlr_seat_request_set_selection_event *event = data;
+    if(server->locked)return;
     wlr_seat_set_selection(server->seat, event->source, event->serial);
 }
 
@@ -397,6 +464,7 @@ static void handle_request_primary_selection(struct wl_listener *listener, void 
 {
     struct madway_server *server = wl_container_of(listener, server, request_primary_selection);
     struct wlr_seat_request_set_primary_selection_event *event = data;
+    if(server->locked)return;
     wlr_seat_set_primary_selection(server->seat, event->source, event->serial);
 }
 
@@ -404,11 +472,12 @@ static void handle_keyboard_modifiers(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_keyboard *keyboard = wl_container_of(listener, keyboard, modifiers);
+    if(keyboard->server->locked)madway_lock_focus(keyboard->server,NULL);
     wlr_seat_set_keyboard(keyboard->server->seat, keyboard->keyboard);
     wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &keyboard->keyboard->modifiers);
     uint32_t modifier = keyboard->server->config.use_super ? WLR_MODIFIER_LOGO : WLR_MODIFIER_ALT;
     if (!(wlr_keyboard_get_modifiers(keyboard->keyboard) & modifier))
-        madway_switcher_finish(keyboard->server, false);
+        if(!keyboard->server->locked)madway_switcher_finish(keyboard->server, false);
 }
 
 static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_key_event *event,
@@ -419,8 +488,24 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
         wlr_session_change_vt(server->session, symbol - XKB_KEY_XF86Switch_VT_1 + 1);
         return true;
     }
+    if(server->locked) {
+        switch(symbol) {
+        case XKB_KEY_XF86AudioRaiseVolume:madway_session_action(server,"volume-up");return true;
+        case XKB_KEY_XF86AudioLowerVolume:madway_session_action(server,"volume-down");return true;
+        case XKB_KEY_XF86AudioMute:madway_session_action(server,"volume-mute");return true;
+        case XKB_KEY_XF86MonBrightnessUp:madway_session_action(server,"brightness-up");return true;
+        case XKB_KEY_XF86MonBrightnessDown:madway_session_action(server,"brightness-down");return true;
+        default:break;
+        }
+        uint32_t modifier=server->config.use_super?WLR_MODIFIER_LOGO:WLR_MODIFIER_ALT;
+        if((modifiers&modifier) && xkb_keysym_to_lower(symbol)==XKB_KEY_l) {
+            madway_session_action(server,"lock");return true;
+        }
+        return false;
+    }
     if (server->switcher_active && symbol == XKB_KEY_Escape)
     { madway_switcher_finish(server, true); return true; }
+    if (server->seat->drag && symbol==XKB_KEY_Escape) {madway_drag_cancel(server);return true;}
     if ((modifiers & (WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT)) == (WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT) &&
         !(modifiers & (WLR_MODIFIER_ALT | WLR_MODIFIER_LOGO)))
     {
@@ -430,6 +515,10 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
     }
     switch (symbol)
     {
+    case XKB_KEY_Print:
+        madway_session_action(server, modifiers & WLR_MODIFIER_SHIFT ? "screenshot-region" :
+                modifiers & WLR_MODIFIER_CTRL ? "screenshot-clipboard" : "screenshot");
+        return true;
     case XKB_KEY_XF86AudioRaiseVolume: madway_session_action(server, "volume-up"); return true;
     case XKB_KEY_XF86AudioLowerVolume: madway_session_action(server, "volume-down"); return true;
     case XKB_KEY_XF86AudioMute: madway_session_action(server, "volume-mute"); return true;
@@ -454,8 +543,10 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
     }
     switch (xkb_keysym_to_lower(symbol))
     {
+    case XKB_KEY_l:
+        madway_session_action(server,"lock");return true;
     case XKB_KEY_Return:
-        madway_launch_kitty(server);
+        madway_launch_terminal(server);
         return true;
     case XKB_KEY_d:
         madway_session_action(server, modifiers & WLR_MODIFIER_SHIFT ? "run" : "launcher");
@@ -499,6 +590,7 @@ static void handle_keyboard_key(struct wl_listener *listener, void *data)
     wlr_seat_set_keyboard(server->seat, keyboard->keyboard);
 
     // XKB uses an offset of 8; Wayland key events keep the original evdev code.
+    if(server->locked)madway_lock_focus(server,NULL);
     xkb_keysym_t symbol = xkb_state_key_get_one_sym(keyboard->keyboard->xkb_state,
             event->keycode + 8);
     uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->keyboard);
@@ -531,6 +623,7 @@ static void handle_keyboard_destroy(struct wl_listener *listener, void *data)
     wl_list_remove(&keyboard->modifiers.link);
     wl_list_remove(&keyboard->destroy.link);
     wl_list_remove(&keyboard->link);
+    xkb_keymap_unref(keyboard->original_keymap);
     free(keyboard);
     if (was_active && !wl_list_empty(&server->keyboards))
     {
@@ -544,12 +637,43 @@ static void handle_keyboard_destroy(struct wl_listener *listener, void *data)
     update_seat_capabilities(server);
 }
 
+static void configure_keyboard(struct madway_keyboard *state)
+{
+    struct madway_config *cfg=&state->server->config;
+    bool custom=cfg->keyboard_layout[0] || cfg->keyboard_variant[0] || cfg->keyboard_options[0];
+    if (!custom) {
+        if (state->custom_keymap) wlr_keyboard_set_keymap(state->keyboard,state->original_keymap);
+        state->custom_keymap=false;return;
+    }
+    if (state->custom_keymap && !strcmp(state->layout,cfg->keyboard_layout) &&
+            !strcmp(state->variant,cfg->keyboard_variant) && !strcmp(state->options,cfg->keyboard_options)) return;
+    struct xkb_rule_names names={.layout=cfg->keyboard_layout[0]?cfg->keyboard_layout:NULL,
+        .variant=cfg->keyboard_variant[0]?cfg->keyboard_variant:NULL,.options=cfg->keyboard_options};
+    struct xkb_context *context=xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    struct xkb_keymap *keymap=context?xkb_keymap_new_from_names(context,&names,XKB_KEYMAP_COMPILE_NO_FLAGS):NULL;
+    if (keymap && wlr_keyboard_set_keymap(state->keyboard,keymap)) {
+        state->custom_keymap=true;
+        snprintf(state->layout,sizeof(state->layout),"%s",cfg->keyboard_layout);
+        snprintf(state->variant,sizeof(state->variant),"%s",cfg->keyboard_variant);
+        snprintf(state->options,sizeof(state->options),"%s",cfg->keyboard_options);
+    } else {
+        snprintf(state->server->input_error,sizeof(state->server->input_error),"Keyboard layout could not be loaded; previous keymap retained");
+        wlr_log(WLR_ERROR,"%s",state->server->input_error);
+    }
+    xkb_keymap_unref(keymap);xkb_context_unref(context);
+}
+
 void madway_reload_input(struct madway_server *server)
 {
+    server->input_error[0]='\0';
     struct madway_keyboard *keyboard;
-    wl_list_for_each(keyboard, &server->keyboards, link)
+    wl_list_for_each(keyboard, &server->keyboards, link) {
+        configure_keyboard(keyboard);
         wlr_keyboard_set_repeat_info(keyboard->keyboard,
                 server->config.repeat_rate, server->config.repeat_delay);
+    }
+    struct madway_pointer *pointer;
+    wl_list_for_each(pointer,&server->pointers,link) madway_configure_pointer(server,pointer->device);
 }
 
 static void add_keyboard(struct madway_server *server, struct wlr_input_device *device)
@@ -579,6 +703,8 @@ static void add_keyboard(struct madway_server *server, struct wlr_input_device *
     }
     state->server = server;
     state->keyboard = keyboard;
+    state->original_keymap=xkb_keymap_ref(keyboard->keymap);
+    configure_keyboard(state);
     state->key.notify = handle_keyboard_key;
     wl_signal_add(&keyboard->events.key, &state->key);
     state->modifiers.notify = handle_keyboard_modifiers;
@@ -625,6 +751,7 @@ static void handle_new_input(struct wl_listener *listener, void *data)
         }
         pointer->server = server;
         pointer->device = device;
+        madway_configure_pointer(server,device);
         pointer->destroy.notify = handle_pointer_destroy;
         wl_signal_add(&device->events.destroy, &pointer->destroy);
         wl_list_insert(server->pointers.prev, &pointer->link);
@@ -632,6 +759,7 @@ static void handle_new_input(struct wl_listener *listener, void *data)
         madway_map_pointer_outputs(server);
         update_seat_capabilities(server);
     }
+    else if (device->type == WLR_INPUT_DEVICE_SWITCH) madway_power_add_switch(server,device);
     wlr_log(WLR_INFO, "Input device detected: %s", device->name != NULL ? device->name : "(unnamed)");
 }
 
@@ -667,11 +795,12 @@ bool madway_init_input(struct madway_server *server)
     server->new_input.notify = handle_new_input;
     wl_signal_add(&server->backend->events.new_input, &server->new_input);
     server->input_initialized = true;
-    return true;
+    return madway_drag_init(server);
 }
 
 void madway_finish_input(struct madway_server *server)
 {
+    madway_drag_finish(server);
     if (server->input_initialized)
     {
         wl_list_remove(&server->new_input.link);

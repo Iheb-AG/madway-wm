@@ -4,10 +4,14 @@
 import argparse
 import configparser
 import json
+import math
 import os
+import pwd
 from pathlib import Path
 import re
+import runpy
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
@@ -15,15 +19,25 @@ import sys
 import tempfile
 
 SHARE = Path(__file__).resolve().parent.parent / "share" / "madway"
-SETTINGS_PAGES = ("Windows", "Displays", "Appearance", "Input", "Notifications", "Audio & brightness", "Session", "Panel")
+SETTINGS_PAGES = ("Windows", "Displays", "Appearance", "Desktop", "Input", "Keyboard", "Mouse & touchpad", "Notifications", "Audio & brightness", "Power", "Session", "Panel")
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "madway" / "settings.ini"
 DEFAULTS = {
     "appearance": {"theme": "black", "title_height": "14", "tile_gap": "1"},
-    "windows": {"default_mode": "floating", "master_percent": "50"},
+    "windows": {"default_mode": "floating", "master_percent": "50", "animate":"true", "animation_ms":"360"},
+    "motion":{"version":"2"},
+    "desktop":{"icons":"true","folder":"","icon_size":"40"},
     "input": {"focus_follows_mouse": "false", "modifier": "alt", "repeat_rate": "25", "repeat_delay": "600"},
-    "panel": {"position": "top", "enabled": "true", "height": "18", "metrics": "true", "clock": "true"},
+    "keyboard":{"layout":"","variant":"","options":""},
+    "mouse":{"speed":"0.0","natural_scroll":"false","left_handed":"false","middle_emulation":"false","accel_profile":"default"},
+    "touchpad":{"tap":"true","tap_drag":"true","drag_lock":"false","disable_while_typing":"true","natural_scroll":"false","speed":"0.0","click_method":"default"},
+    "workspaces":{"animate":"true","animation_ms":"420"},
+    "panel": {"position": "top", "enabled": "true", "height": "18", "metrics": "true", "clock": "true", "label": "@user", "tasks":"icons"},
+    "demoscene": {"scene": "classic", "assets": "", "sound": "false", "click_through": "true"},
+    "power": {"show_battery": "true", "notifications": "true", "low_percent": "20", "critical_percent": "10", "lid_action": "suspend"},
+    "locking": {"before_sleep":"true"},
+    "dock": {"enabled":"true", "position":"bottom", "icons_only":"true", "icon_size":"32", "tray":"true", "autohide":"true", "animate":"true", "animation_ms":"240"},
     "controls": {"volume_step": "5", "brightness_step": "5"},
-    "wallpaper": {"type": "auto", "path": "", "mode": "fill", "color": "#000000"},
+    "wallpaper": {"type": "auto", "path": "", "mode": "fill", "color": "#000000", "source":"folder", "folder":"", "images":"[]", "interval":"300", "slideshow_enabled":"true"},
     "notifications": {"enabled": "true", "indicators": "true", "timeout": "5000", "width": "280", "anchor": "top-right"},
     "sounds": {"enabled": "false", "volume": "0.25", "startup": "", "logout": "", "shutdown": ""},
 }
@@ -32,14 +46,43 @@ DEFAULTS = {
 def settings():
     config = configparser.ConfigParser(interpolation=None)
     config.read_dict(DEFAULTS)
-    config.read(CONFIG)
+    stored=configparser.ConfigParser(interpolation=None);stored.read(CONFIG)
+    config.read_dict({section:dict(stored.items(section)) for section in stored.sections()})
+    if stored.getint('motion','version',fallback=0)<2:
+        for section,legacy,current in [('windows','180','360'),('workspaces','220','420'),('dock','180','240')]:
+            if config.get(section,'animation_ms')==legacy:config[section]['animation_ms']=current
     return config
+
+
+def panel_label(config=None):
+    value = (config or settings()).get('panel','label').strip() or '@user'
+    if value == '@user':value = pwd.getpwuid(os.getuid()).pw_name
+    return ''.join(character for character in value if character.isprintable())[:64] or 'groxiv'
 
 
 def themes():
     profiles = configparser.ConfigParser(interpolation=None)
     profiles.read(SHARE / 'themes.ini')
     return profiles
+
+
+def desktop_preset(config, name):
+    """Apply geometry and background together, preserving unrelated preferences."""
+    if name not in {'gershwin','gershwin-dark'}:raise ValueError('Unknown desktop preset')
+    config['appearance'].update(theme=name, title_height='22')
+    config['panel'].update(enabled='true', position='top', height='22', metrics='false')
+    config['dock'].update(enabled='true',position='bottom')
+    wallpaper = SHARE/'wallpapers'/'Abstract Blue.png'
+    config['wallpaper'].update(type='image' if wallpaper.is_file() else 'color',
+        path=str(wallpaper) if wallpaper.is_file() else '', mode='stretch', color='#5f6770')
+    return config
+
+
+def write_settings(config):
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile('w', dir=CONFIG.parent, delete=False) as temporary:
+        config.write(temporary);temporary_path = Path(temporary.name)
+    temporary_path.replace(CONFIG)
 
 
 def theme_style(style, config=None):
@@ -55,7 +98,17 @@ def theme_style(style, config=None):
     replacements.update(dict.fromkeys(('#282828', '#303030', '#555555', '#383838'), palette['border']))
     replacements.update(dict.fromkeys(('#202020', '#222222'), palette['active']))
     replacements.update(dict.fromkeys(('#b0b0b0', '#cccccc', '#dddddd', '#888888', '#666666'), palette['accent']))
-    return re.sub(r'#[0-9a-fA-F]{6}', lambda match:replacements.get(match[0].lower(), match[0]), style)
+    result = re.sub(r'#[0-9a-fA-F]{6}', lambda match:replacements.get(match[0].lower(), match[0]), style)
+    if name in {'gershwin','gershwin-dark'}:
+        if '{' in style:
+            result += '\n'+(SHARE/'eau-common.css').read_text()
+            if '.bar' in style:result += '\n'+(SHARE/'eau-panel.css').read_text()
+            elif '#input' in style:result += '\n#input { background: white; border-radius: 9px; margin: 5px; border: 1px solid #999999; } #entry:selected, #text:selected { color: white; }'
+            if name == 'gershwin-dark':result += '\n'+(SHARE/'eau-dark.css').read_text()
+        else:
+            result = re.sub(r'^font=.*$', 'font=Inter Medium 10', result, flags=re.M)
+            result = re.sub(r'^border-radius=.*$', 'border-radius=6', result, flags=re.M)
+    return result
 
 
 def validate_script_updates(updates):
@@ -81,6 +134,17 @@ def validate_script_updates(updates):
         elif field == 'wallpaper.path':
             if not Path(value).expanduser().is_file():raise ValueError('Wallpaper image does not exist')
         else:raise ValueError('Unknown setting: '+field)
+
+
+def demoscenes():
+    """Load the optional local catalogue; scene content is not part of the desktop."""
+    for path in (SHARE/'demoscenes.json', Path(__file__).resolve().parent.parent/'extras/demoscene/scenes.json'):
+        try:
+            entries = json.loads(path.read_text())
+            return {key:value for key,value in entries.items()
+                    if re.fullmatch(r'[a-z0-9_-]+', key) and isinstance(value, dict) and isinstance(value.get('title'), str)}
+        except (OSError, ValueError, AttributeError, TypeError):continue
+    return {}
 
 
 def runtime_directory():
@@ -154,6 +218,87 @@ def audio_control(message):
     run(["pactl", *command])
 
 
+def battery_state(root=None):
+    """Read only system batteries, keeping charge and energy units distinct."""
+    root = Path(root or os.environ.get('MADWAY_POWER_SUPPLY_PATH', '/sys/class/power_supply'))
+    def read(path, name):
+        try:return (path/name).read_text().strip()
+        except OSError:return None
+    def number(path, name):
+        try:
+            value = float(read(path,name))
+            return value if math.isfinite(value) and value >= 0 else None
+        except (TypeError, ValueError):return None
+    batteries=[];supplies=[]
+    try:devices=sorted(root.iterdir())
+    except OSError:devices=[]
+    for device in devices:
+        if read(device,'scope') == 'Device':continue
+        kind=read(device,'type')
+        if kind != 'Battery':
+            online=read(device,'online')
+            if online in ('0','1'):supplies.append(online=='1')
+            continue
+        if read(device,'present') == '0':continue
+        now,full=number(device,'energy_now'),number(device,'energy_full')
+        charge_now,charge_full=number(device,'charge_now'),number(device,'charge_full')
+        voltage=number(device,'voltage_now') or number(device,'voltage_min_design')
+        if (now is None or not full) and voltage and charge_now is not None and charge_full:
+            now,full=charge_now*voltage/1e6,charge_full*voltage/1e6
+        percent=number(device,'capacity')
+        if percent is None and full and now is not None:percent=100*now/full
+        if percent is None and charge_full and charge_now is not None:percent=100*charge_now/charge_full
+        if percent is not None:percent=min(100,max(0,round(percent)))
+        power=number(device,'power_now')
+        if not power and voltage:
+            current=number(device,'current_now')
+            if current is not None:power=current*voltage/1e6
+        batteries.append(dict(name=device.name,percent=percent,status=read(device,'status') or 'Unknown',
+                              energy_now=now,energy_full=full,power=power))
+    percent=None
+    if batteries and all(row['energy_now'] is not None and row['energy_full'] for row in batteries):
+        percent=round(100*sum(row['energy_now'] for row in batteries)/sum(row['energy_full'] for row in batteries))
+    elif batteries and all(row['percent'] is not None for row in batteries):
+        percent=round(sum(row['percent'] for row in batteries)/len(batteries))
+    if len(batteries)==1:percent=batteries[0]['percent']
+    if percent is not None:percent=min(100,max(0,percent))
+    statuses={row['status'] for row in batteries}
+    status='Discharging' if 'Discharging' in statuses else 'Charging' if 'Charging' in statuses else 'Full' if statuses=={'Full'} else 'Not charging' if 'Not charging' in statuses else 'Unknown'
+    on_ac=any(supplies) if supplies else None
+    seconds=None
+    if batteries and len(statuses)==1 and status in ('Charging','Discharging') and all(
+            row['energy_now'] is not None and row['energy_full'] and row['power'] for row in batteries):
+        energy=sum(row['energy_now'] if status=='Discharging' else max(0,row['energy_full']-row['energy_now']) for row in batteries)
+        seconds=round(3600*energy/sum(row['power'] for row in batteries))
+    return dict(present=bool(batteries),percent=percent,status=status,on_ac=on_ac,seconds=seconds,batteries=batteries)
+
+
+def battery_severity(state, low=20, critical=10):
+    percent=state.get('percent')
+    draining=state.get('status')=='Discharging' or (state.get('on_ac') is False and state.get('status') not in ('Charging','Full'))
+    if not state.get('present') or percent is None or not draining:return 0
+    return 2 if percent<=critical else 1 if percent<=low else 0
+
+
+class BatteryAlerts:
+    def __init__(self):self.level=0
+    def update(self,state,low=20,critical=10,enabled=True):
+        percent=state.get('percent')
+        if not enabled or not state.get('present') or percent is None or state.get('status') in ('Charging','Full') or (
+                state.get('on_ac') is True and state.get('status')!='Discharging'):
+            self.level=0;return None
+        if percent>=low+5:self.level=0
+        severity=battery_severity(state,low,critical)
+        if severity>self.level:
+            self.level=severity;return 'critical' if severity==2 else 'low'
+        return None
+
+
+def power_snapshot():
+    try:return json.loads((runtime_directory()/'power.json').read_text())
+    except (OSError, ValueError):return dict(present=False)
+
+
 def backlight():
     devices = sorted(Path("/sys/class/backlight").glob("*"))
     if not devices:
@@ -207,8 +352,11 @@ class Desktop:
         self.loop = GLib.MainLoop()
         self.children = {}
         self.ids = {}
+        self.notification_bus = None
+        self.battery_alerts = BatteryAlerts()
         self.notification_options = None
         self.panel_options = None
+        self.dock_options = None
         self.settings_page = "Windows"
         self.exit_event = "logout"
         self.shutdown_played = False
@@ -217,6 +365,7 @@ class Desktop:
         GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self.stop)
         GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self.stop)
         GLib.timeout_add_seconds(1, self.reap)
+        GLib.timeout_add_seconds(5, self.poll_power)
         try:
             self.system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
             self.system_bus.signal_subscribe("org.freedesktop.login1", "org.freedesktop.login1.Manager",
@@ -224,6 +373,16 @@ class Desktop:
                 self.prepare_shutdown)
         except GLib.Error:
             self.system_bus = None
+        self.locker=runpy.run_path(str(Path(__file__).with_name('madway_lock.py')))['LockController'](self,SHARE)
+        self.power = runpy.run_path(str(Path(__file__).with_name('madway_power.py')))['PowerManager'](self)
+        self.background = runpy.run_path(str(Path(__file__).with_name('madway_wallpaper.py')))['WallpaperController'](self)
+        self.desktop_options=None
+        GLib.timeout_add_seconds(2,self.poll_session_power)
+
+    def poll_session_power(self):
+        try:return self.power.sync()
+        except Exception as error:
+            print('madway: session power: '+str(error),file=sys.stderr);return True
 
     def spawn(self, key, arguments):
         existing = self.children.get(key)
@@ -278,12 +437,12 @@ class Desktop:
             except subprocess.TimeoutExpired:
                 self.terminate("sound-" + event)
 
-    def notify(self, key, title, body="", value=None):
+    def notify(self, key, title, body="", value=None, urgency="normal", timeout=1500):
         if not self.config.getboolean("notifications", "enabled"):
-            return
+            return False
         if key in {"volume", "brightness"} and not self.config.getboolean("notifications", "indicators"):
             return
-        arguments = ["notify-send", "--app-name=madway", "--print-id", "--expire-time=1500",
+        arguments = ["notify-send", "--app-name=madway", "--print-id", f"--expire-time={timeout}", f"--urgency={urgency}",
                      "--hint=boolean:transient:true"]
         if key in self.ids:
             arguments += ["--replace-id", self.ids[key]]
@@ -291,28 +450,45 @@ class Desktop:
             arguments += ["--hint", f"int:value:{min(100, max(0, int(value)))}"]
         try:
             self.ids[key] = run([*arguments, title, body]).strip()
+            return True
         except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as error:
             print(f"madway: notification unavailable: {error}", file=sys.stderr)
+            return False
+
+    def poll_power(self):
+        state=battery_state()
+        try:
+            with tempfile.NamedTemporaryFile('w',dir=self.directory,delete=False) as output:
+                json.dump(state,output);path=Path(output.name)
+            path.replace(self.directory/'power.json')
+        except OSError as error:
+            print(f'madway: battery snapshot unavailable: {error}',file=sys.stderr)
+        enabled=self.config.getboolean('power','notifications') and self.config.getboolean('notifications','enabled')
+        low=self.config.getint('power','low_percent');critical=self.config.getint('power','critical_percent')
+        previous=self.battery_alerts.level
+        alert=self.battery_alerts.update(state,low,critical,enabled)
+        if alert:
+            title=('Battery critical' if alert=='critical' else 'Battery low')+f" · {state['percent']}%"
+            body='Battery is discharging. '+('Check your charger or save your work.' if state['on_ac'] else 'Connect power'+(' and save your work.' if alert=='critical' else '.'))
+            if not self.notify('battery',title,body,urgency='critical' if alert=='critical' else 'normal',timeout=0 if alert=='critical' else 10000):
+                self.battery_alerts.level=previous
+        elif self.battery_alerts.level==0 and 'battery' in self.ids:
+            identity=self.ids.pop('battery')
+            try:
+                if self.notification_bus is None:
+                    self.notification_bus=self.Gio.bus_get_sync(self.Gio.BusType.SESSION,None)
+                def closed(bus,result):
+                    try:bus.call_finish(result)
+                    except self.GLib.Error as error:
+                        print(f'madway: battery notification dismissal unavailable: {error}',file=sys.stderr)
+                self.notification_bus.call('org.freedesktop.Notifications','/org/freedesktop/Notifications',
+                    'org.freedesktop.Notifications','CloseNotification',self.GLib.Variant('(u)',(int(identity),)),
+                    None,self.Gio.DBusCallFlags.NO_AUTO_START,1000,None,closed)
+            except (ValueError,self.GLib.Error):pass
+        return True
 
     def wallpaper(self):
-        image = self.config.get("wallpaper", "path").strip()
-        color = self.config.get("wallpaper", "color")
-        mode = self.config.get("wallpaper", "mode")
-        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
-            raise RuntimeError("Wallpaper color must be #RRGGBB")
-        if mode not in {"fill", "fit", "center", "stretch", "tile"}:
-            raise RuntimeError("Unknown wallpaper mode")
-        arguments = ["swaybg", "-c", color[1:]]
-        background_type = self.config.get("wallpaper", "type")
-        if background_type not in {"auto", "image", "color"}:raise RuntimeError("Unknown background type")
-        if background_type == "image" and not image:raise RuntimeError("Choose a wallpaper image")
-        if image and background_type != "color":
-            path = Path(image).expanduser()
-            if not path.is_file():
-                raise RuntimeError("Wallpaper image does not exist")
-            arguments += ["-i", str(path), "-m", mode]
-        self.terminate("wallpaper")
-        self.spawn("wallpaper", arguments)
+        self.background.apply(self.config)
 
     def apply(self):
         self.config = settings()
@@ -334,7 +510,7 @@ class Desktop:
             self.spawn("notifications", ["mako", "--config", str(self.directory / "mako.conf")])
         else:
             self.terminate("notifications")
-        panel_options = (self.config.get("appearance", "theme"), *self.config.items("panel"))
+        panel_options = (self.config.get("appearance", "theme"), *self.config.items("panel"), *self.config.items("power"))
         if panel_options != self.panel_options:
             self.terminate("panel")
             self.panel_options = panel_options
@@ -342,11 +518,46 @@ class Desktop:
             self.spawn("panel", [sys.executable, str(Path(__file__).with_name("madway-panel")), "bar"])
         else:
             self.terminate("panel")
+        self.dock()
+        desktop_options=(self.config.get('appearance','theme'),*self.config.items('desktop'))
+        if desktop_options!=self.desktop_options:
+            self.terminate('desktop-icons');self.desktop_options=desktop_options
+        if self.config.getboolean('desktop','icons'):
+            self.spawn('desktop-icons',[sys.executable,str(Path(__file__).with_name('madway-desktop'))])
+        else:self.terminate('desktop-icons')
         os.kill(self.parent, signal.SIGHUP)
+        self.poll_session_power()
 
     def compositor(self, command):
         with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
             channel.sendto(command.encode(), str(self.directory / "compositor.sock"))
+
+    def dock(self):
+        options = (self.config.get('appearance','theme'), *self.config.items('dock'))
+        if options != self.dock_options:
+            self.terminate('dock');self.dock_options = options
+        if not self.config.getboolean('dock','enabled'):
+            self.terminate('dock');return
+        position = self.config.get('dock','position')
+        if position not in {'top','bottom','left','right'}:raise ValueError('Unknown dock position')
+        size = min(48,max(20,self.config.getint('dock','icon_size')))
+        helper = shlex.quote(str(Path(__file__).resolve()))
+        config = dict(name='madway-dock',layer='top',position=position,width=2 if position in {'top','bottom'} else size+12,
+                      height=size+12 if position in {'top','bottom'} else 2,spacing=2,exclusive=True,
+                      **{'gtk-layer-shell':True,'namespace':'madway-dock','fixed-center':False,'margin':4,
+                         'modules-left':['custom/apps','custom/terminal','custom/files','custom/settings'],
+                         'modules-center':['wlr/taskbar'],'modules-right':['tray'] if self.config.getboolean('dock','tray') else [],
+                         'wlr/taskbar':{'format':'{icon}' if self.config.getboolean('dock','icons_only') else '{icon} {name}',
+                                        'icon-size':size,'all-outputs':True,'on-click':'minimize-raise','on-click-middle':'close',
+                                        'tooltip-format':'{title}','app_ids-mapping':{'org.kde.konsole':'org.kde.konsole'}},
+                         'tray':{'icon-size':20,'spacing':5,'show-passive-items':True}})
+        for key,command,tooltip in [('apps','launcher','Applications'),('terminal','terminal','Konsole'),
+                                    ('files','files','Files'),('settings','settings','Settings')]:
+            config['custom/'+key]={'format':' ','tooltip-format':tooltip,'on-click':helper+' action '+command}
+        (self.directory/'dock.json').write_text(json.dumps(config))
+        style=theme_style((SHARE/'dock.css').read_text(),self.config)
+        (self.directory/'dock.css').write_text(style)
+        self.spawn('dock',['waybar','--config',str(self.directory/'dock.json'),'--style',str(self.directory/'dock.css')])
 
     def launcher(self, mode):
         existing = self.children.get("launcher")
@@ -356,8 +567,31 @@ class Desktop:
         style = self.directory / "wofi.css"
         style.write_text(theme_style((SHARE / "wofi.css").read_text(), self.config))
         self.spawn("launcher", ["wofi", "--show", mode, "--conf", str(SHARE / "wofi.conf"),
-                   "--style", str(style), "--term", "kitty", "--prompt",
+                   "--style", str(style), "--term", str(Path(__file__).resolve().with_name("madway-terminal")), "--prompt",
                    "Search applications…" if mode == "drun" else "Run command…"])
+
+    def overlay(self, scene=None):
+        existing = self.children.get('demoscene')
+        if existing is not None and existing.poll() is None and scene is None:
+            self.terminate('demoscene');return
+        scene = scene or self.config.get("demoscene", "scene")
+        if scene not in demoscenes():raise ValueError("Demoscene unavailable; install your local demoscene package")
+        if existing is not None and existing.poll() is None:
+            if getattr(self, 'overlay_scene', None) == scene:return
+            self.terminate('demoscene')
+        candidates = [Path(__file__).resolve().with_name('madway-demoscene'),
+                      Path(__file__).resolve().parent.parent/'build-demoscene/extras/demoscene/madway-demoscene',
+                      Path(__file__).resolve().parent.parent/'build/extras/demoscene/madway-demoscene']
+        binary = next((str(path) for path in candidates if path.is_file() and os.access(path, os.X_OK)), None)
+        binary = binary or shutil.which('madway-demoscene')
+        if not binary:raise RuntimeError('Build/install the optional overlay with scripts/install-madway --demoscene')
+        arguments = [binary, '--scene', scene]
+        self.overlay_scene = scene
+        assets = self.config.get('demoscene', 'assets').strip()
+        if assets:arguments += ['--assets', str(Path(assets).expanduser())]
+        if self.config.getboolean('demoscene', 'sound'):arguments += ['--sound']
+        if not self.config.getboolean('demoscene', 'click_through'):arguments += ['--interactive']
+        self.spawn('demoscene', arguments)
 
     def perform(self, message):
         name = message.get("action")
@@ -368,7 +602,7 @@ class Desktop:
             message.update(x=int(parts[1]), y=int(parts[2]));name = "desktop-menu"
         if name in {"desktop-menu", "panel-menu"}:
             page = message.get("page", "Desktop")
-            if page not in {"Desktop", "Settings", "Window", "Workspaces", "Audio", "Status", "Clock", "Session"}:
+            if page not in {"Desktop", "Settings", "Window", "Workspaces", "Audio", "Status", "Clock", "Session", "Demoscenes", "Battery", "Screenshot"}:
                 raise RuntimeError("Unknown panel menu")
             self.terminate("desktop-menu")
             edge = message.get("edge", "point")
@@ -376,6 +610,14 @@ class Desktop:
             self.spawn("desktop-menu", [sys.executable, str(Path(__file__).with_name("madway-panel")), "menu",
                 "--x", str(int(message.get("x", 0))), "--y", str(int(message.get("y", 0))),
                 "--edge", edge, "--page", page, "--detail="+str(message.get("detail", ""))[:256]])
+        elif name == "power-refresh":
+            self.poll_power()
+        elif name == "overlay-start":
+            self.overlay(str(message.get("scene", "")))
+        elif name == "overlay-toggle":
+            self.overlay()
+        elif name == "overlay-stop":
+            self.terminate("demoscene")
         elif name == "switcher-show":
             self.spawn("switcher", [sys.executable, str(Path(__file__).with_name("madway-panel")), "switcher"])
         elif name == "switcher-hide":
@@ -383,6 +625,8 @@ class Desktop:
         elif name == "switcher-select":
             self.compositor("focus "+str(int(message["id"])))
             self.terminate("switcher")
+        elif name == 'taskbar-toggle':
+            self.compositor('toggle-task '+str(int(message['id'])))
         elif name == "tile":
             direction = message.get("direction")
             if direction not in {"left", "right", "up", "down"}:raise RuntimeError("Unknown tile direction")
@@ -394,10 +638,16 @@ class Desktop:
             for field, value in updates.items():
                 section, key = field.split('.', 1)
                 config[section][key] = str(value)
-            CONFIG.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile("w", dir=CONFIG.parent, delete=False) as temporary:
-                config.write(temporary);temporary_path = Path(temporary.name)
-            temporary_path.replace(CONFIG)
+            write_settings(config)
+            self.apply()
+        elif name == 'desktop-preset':
+            write_settings(desktop_preset(settings(), message.get('preset')))
+            self.apply()
+        elif name == 'toggle-desktop-icons':
+            config=settings()
+            config['desktop']['icons']=str(not config.getboolean('desktop','icons')).lower()
+            write_settings(config)
+            self.terminate('desktop-menu')
             self.apply()
         elif name == "audio-control":
             audio_control(message)
@@ -416,11 +666,21 @@ class Desktop:
             value = int(message["value"])
             if not 0 <= value < 9:raise RuntimeError("Invalid workspace")
             self.compositor(f"workspace {value}")
-        elif name in {"window-floating", "window-maximize", "window-fullscreen", "window-close", "window-above"}:
+        elif name in {"window-floating", "window-maximize", "window-minimize", "window-fullscreen", "window-close", "window-above"}:
             self.compositor(name.removeprefix("window-"))
         elif name == "terminal":
-            process = subprocess.Popen(["kitty", "-o", "linux_display_server=wayland"], start_new_session=True)
+            process = subprocess.Popen(["konsole", "--separate", "--platform", "wayland"], start_new_session=True)
             self.children[f"terminal-{process.pid}"] = process
+        elif name == 'files':
+            from gi.repository import Gio
+            Gio.AppInfo.launch_default_for_uri(Path.home().as_uri(), None)
+        elif name=='wallpaper-next':
+            self.background.next()
+        elif name in {'screenshot','screenshot-region','screenshot-clipboard'}:
+            arguments=[sys.executable,str(Path(__file__).with_name('madway-screenshot'))]
+            if name=='screenshot-region':arguments.append('--region')
+            if name=='screenshot-clipboard':arguments.append('--clipboard')
+            self.spawn('screenshot',arguments)
         elif name in {"launcher", "run"}:
             self.launcher("drun" if name == "launcher" else "run")
         elif name in {"settings", "settings-page"}:
@@ -481,6 +741,10 @@ class Desktop:
             except Exception:
                 self.shutdown_played = False
                 raise
+        elif name == 'sleep':
+            self.power.request_sleep()
+        elif name == 'lock':
+            self.locker.retry()
         else:
             raise RuntimeError("Unknown desktop action")
 
@@ -519,6 +783,7 @@ class Desktop:
                 except (RuntimeError, subprocess.TimeoutExpired) as error:
                     print(f"madway: session activation environment: {error}", file=sys.stderr)
             self.apply()
+            self.poll_power()
             self.sound("startup")
             print(f"madway: desktop services ready on {self.socket_path}", flush=True)
             startup = CONFIG.parent / 'startup.madway'
@@ -526,6 +791,9 @@ class Desktop:
                 self.spawn('startup-script', [sys.executable, str(Path(__file__).with_name('madway-script')), str(startup)])
             self.loop.run()
         finally:
+            self.power.close()
+            self.locker.close()
+            self.background.close()
             if not self.shutdown_played:
                 self.sound(self.exit_event, wait=True)
             for key in list(self.children):
@@ -534,6 +802,7 @@ class Desktop:
             self.socket_path.unlink(missing_ok=True)
             (self.directory / "mako.conf").unlink(missing_ok=True)
             (self.directory / "wofi.css").unlink(missing_ok=True)
+            (self.directory / "power.json").unlink(missing_ok=True)
             for path in self.directory.glob("settings-*.sock"):path.unlink(missing_ok=True)
             try:
                 self.directory.rmdir()
@@ -551,27 +820,39 @@ def settings_window(initial_page="Windows"):
     window = Gtk.Window(title="madway — Settings")
     # This owned client requests no CSD; madway supplies its compact 14px frame.
     window.set_decorated(False)
-    window.set_default_size(620, 360)
+    display=Gdk.Display.get_default()
+    monitor=display.get_monitor_at_point(0,0) if display else None
+    bounds=monitor.get_geometry() if monitor else None
+    window.set_default_size(min(640,max(440,bounds.width-48)) if bounds else 640,
+                            min(440,max(320,bounds.height-80)) if bounds else 440)
+    window.get_style_context().add_class('settings-window')
     window.connect("destroy", Gtk.main_quit)
     provider = Gtk.CssProvider()
     settings_css = "* { font-family: monospace; font-size: 11px; border-radius: 0; } window { background: #000000; color: #c8c8c8; } button, entry, spinbutton, combobox { min-height: 16px; padding: 1px 4px; background: #080808; color: #c8c8c8; border: 1px solid #282828; box-shadow: none; } button:hover, button:focus { border-color: #666666; } spinbutton button { min-height: 14px; padding: 0 3px; border: 0; } stacksidebar { background: #080808; } stacksidebar row { min-height: 18px; padding: 2px 4px; } stacksidebar row, stacksidebar row label { color: #bdbdbd; } stacksidebar row:hover, stacksidebar row:selected { background: #222222; } label { color: #c8c8c8; padding: 0; } scale { padding: 2px; } scale trough { min-height: 2px; background: #282828; } scale highlight { background: #888888; }"
-    provider.load_from_data(theme_style(settings_css, config).encode())
+    # Apply layout rules after theme material rules, consistently across profiles.
+    def settings_styles():
+        palette=themes()[config.get('appearance','theme')]
+        layout=(SHARE/'settings.css').read_text()
+        for name,value in palette.items():layout=layout.replace('@'+name+'@',value)
+        return (theme_style(settings_css,config)+layout).encode()
+    provider.load_from_data(settings_styles())
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=4)
+    root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
     window.add(root)
-    content = Gtk.Box(spacing=4)
+    content = Gtk.Box(spacing=10)
     root.pack_start(content, True, True, 0)
     stack = Gtk.Stack()
     sidebar = Gtk.StackSidebar()
     sidebar.set_stack(stack)
-    sidebar.set_size_request(112, -1)
+    sidebar.set_size_request(134, -1)
     content.pack_start(sidebar, False, False, 0)
     content.pack_start(stack, True, True, 0)
     status = Gtk.Label(xalign=0, wrap=True)
     root.pack_start(status, False, False, 0)
 
     def category(name):
-        grid = Gtk.Grid(column_spacing=8, row_spacing=5, margin=3)
+        grid = Gtk.Grid(column_spacing=12, row_spacing=7, margin=4)
+        grid.set_valign(Gtk.Align.START)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.add(grid)
@@ -580,8 +861,11 @@ def settings_window(initial_page="Windows"):
 
     def field(grid, label, widget):
         row = len(grid.get_children()) // 2
-        grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+        caption=Gtk.Label(label=label, xalign=0, wrap=True, max_width_chars=25)
+        grid.attach(caption, 0, row, 1, 1)
         widget.set_hexpand(True)
+        widget.set_valign(Gtk.Align.CENTER)
+        if isinstance(widget,Gtk.Scale):widget.set_value_pos(Gtk.PositionType.RIGHT)
         grid.attach(widget, 1, row, 1, 1)
         return widget
 
@@ -603,15 +887,15 @@ def settings_window(initial_page="Windows"):
         widget.set_halign(Gtk.Align.START)
         return widget
 
-    def file_field(grid, label, value):
-        controls = Gtk.Box(spacing=4)
+    def file_field(grid, label, value, directory=False):
+        controls = Gtk.Box(spacing=5)
         entry = Gtk.Entry(text=value)
         entry.set_width_chars(18)
         controls.pack_start(entry, True, True, 0)
         browse = Gtk.Button(label="Browse…")
         def choose(button):
             dialog = Gtk.FileChooserDialog(title="Choose " + label.lower(), transient_for=window,
-                    action=Gtk.FileChooserAction.OPEN)
+                    action=Gtk.FileChooserAction.SELECT_FOLDER if directory else Gtk.FileChooserAction.OPEN)
             dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK)
             if dialog.run() == Gtk.ResponseType.OK:
                 entry.set_text(dialog.get_filename())
@@ -697,30 +981,131 @@ def settings_window(initial_page="Windows"):
     appearance = category("Appearance")
     profiles = themes()
     theme_choice = combo(appearance, "Theme profile", [(key, profiles[key]["name"]) for key in profiles.sections()], config.get("appearance", "theme"))
-    background_type = combo(appearance, "Background", [("color", "Solid color"), ("image", "Wallpaper image")],
+    preset = Gtk.Button(label='Use Gershwin panel, frames and wallpaper')
+    preset.set_tooltip_text('Apply Eau with its original 22px layout and local Abstract Blue wallpaper')
+    def apply_gershwin(widget):
+        action('desktop-preset', preset='gershwin')
+        window.destroy()
+    preset.connect('clicked', apply_gershwin)
+    field(appearance, 'Desktop preset', preset)
+    dark_preset=Gtk.Button(label='Use Gershwin Midnight and dock')
+    dark_preset.connect('clicked',lambda widget:(action('desktop-preset',preset='gershwin-dark'),window.destroy()))
+    field(appearance,'Dark desktop preset',dark_preset)
+    workspace_animate=switch(appearance,'Animate workspace switching','workspaces','animate')
+    workspace_duration=spin(appearance,'Workspace animation (ms)','workspaces','animation_ms',80,500)
+    window_animate=switch(appearance,'Animate maximize / minimize','windows','animate')
+    window_duration=spin(appearance,'Window animation (ms)','windows','animation_ms',80,500)
+    background_type = combo(appearance, "Background", [("color", "Solid color"), ("image", "Wallpaper image"),('slideshow','Slideshow')],
         ("image" if config.get("wallpaper", "path") else "color") if config.get("wallpaper", "type") == "auto" else config.get("wallpaper", "type"))
+    slideshow_enabled=switch(appearance,'Enable slideshow','wallpaper','slideshow_enabled')
+    slideshow_enabled.set_active(background_type.get_active_id()=='slideshow' and config.getboolean('wallpaper','slideshow_enabled'))
     image = file_field(appearance, "Wallpaper", config.get("wallpaper", "path"))
     mode = combo(appearance, "Wallpaper fit", [(item, item.capitalize()) for item in ["fill", "fit", "center", "stretch", "tile"]], config.get("wallpaper", "mode"))
     color = field(appearance, "Background color", Gtk.Entry(text=config.get("wallpaper", "color")))
+    wallpaper_api=runpy.run_path(str(Path(__file__).with_name('madway_wallpaper.py')))
+    slideshow_source=combo(appearance,'Slideshow source',[('folder','Folder'),('files','Selected images')],config.get('wallpaper','source'))
+    slideshow_folder=file_field(appearance,'Slideshow folder',config.get('wallpaper','folder'),directory=True)
+    slideshow_interval=spin(appearance,'Change image every (seconds)','wallpaper','interval',1,86400)
+    try:slide_paths=wallpaper_api['selected_images'](config.get('wallpaper','images'))
+    except ValueError:slide_paths=[]
+    selection=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
+    chosen=Gtk.ListBox();chosen.set_selection_mode(Gtk.SelectionMode.NONE)
+    chosen_scroll=Gtk.ScrolledWindow();chosen_scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
+    chosen_scroll.set_min_content_height(72);chosen_scroll.set_max_content_height(120);chosen_scroll.add(chosen)
+    selection.pack_start(chosen_scroll,True,True,0)
+    def update_images():
+        for child in chosen.get_children():child.destroy()
+        for path in slide_paths:
+            row=Gtk.Box(spacing=3);label=Gtk.Label(label=Path(path).name,xalign=0)
+            label.set_ellipsize(3);label.set_tooltip_text(path);label.set_max_width_chars(28)
+            row.pack_start(label,True,True,0)
+            remove=Gtk.Button(label='×')
+            def discard(widget,path=path):slide_paths.remove(path);update_images()
+            remove.connect('clicked',discard);row.pack_end(remove,False,False,0);chosen.add(row)
+        chosen.show_all()
+    def select_images(widget):
+        dialog=Gtk.FileChooserDialog(title='Select slideshow images',transient_for=window,action=Gtk.FileChooserAction.OPEN)
+        dialog.add_buttons('Cancel',Gtk.ResponseType.CANCEL,'Add images',Gtk.ResponseType.OK)
+        dialog.set_select_multiple(True)
+        image_filter=Gtk.FileFilter();image_filter.set_name('Images');image_filter.add_pixbuf_formats();dialog.add_filter(image_filter)
+        if dialog.run()==Gtk.ResponseType.OK:
+            for path in dialog.get_filenames():
+                if path not in slide_paths:slide_paths.append(path)
+            update_images()
+        dialog.destroy()
+    add_images=Gtk.Button(label='Add images…');add_images.connect('clicked',select_images)
+    image_actions=Gtk.Box(spacing=4);image_actions.pack_start(add_images,True,True,0)
+    clear_images=Gtk.Button(label='Clear')
+    clear_images.connect('clicked',lambda widget:(slide_paths.clear(),update_images()))
+    image_actions.pack_start(clear_images,False,False,0);selection.pack_start(image_actions,False,False,0)
+    field(appearance,'Slideshow images',selection);update_images()
+    next_image=Gtk.Button(label='Next slideshow image')
+    next_image.connect('clicked',lambda widget:save() and send('wallpaper-next'))
+    field(appearance,'Preview slideshow',next_image)
+    slide_status=field(appearance,'Slideshow status',Gtk.Label(xalign=0,wrap=True))
+    def refresh_slide_status():
+        try:
+            state=json.loads((runtime_directory()/'wallpaper.json').read_text())
+            slide_status.set_text(state.get('error') or ((Path(state['path']).name+' · '+str(state.get('count',0))+' images'+(' · paused' if not state.get('enabled',True) else '')) if state.get('type')=='slideshow' and state.get('path') else 'Slideshow inactive'))
+        except (OSError,ValueError,KeyError):slide_status.set_text('Wallpaper status unavailable')
+        return True
+    refresh_slide_status();slide_status_timer=GLib.timeout_add_seconds(2,refresh_slide_status)
+    window.connect('destroy',lambda *args:GLib.source_remove(slide_status_timer))
     def background_changed(*args):
+        if args and args[0] is background_type:slideshow_enabled.set_active(background_type.get_active_id()=='slideshow')
         image.get_parent().set_sensitive(background_type.get_active_id() == "image")
-        mode.set_sensitive(background_type.get_active_id() == "image")
-    background_type.connect('changed', background_changed);background_changed()
+        slideshow=background_type.get_active_id()=='slideshow'
+        mode.set_sensitive(background_type.get_active_id() in {'image','slideshow'})
+        slideshow_source.set_sensitive(slideshow);slideshow_interval.set_sensitive(slideshow);next_image.set_sensitive(slideshow and slideshow_enabled.get_active())
+        slideshow_folder.get_parent().set_sensitive(slideshow and slideshow_source.get_active_id()=='folder')
+        selection.set_sensitive(slideshow and slideshow_source.get_active_id()=='files')
+    def slideshow_toggled(widget):
+        if widget.get_active():background_type.set_active_id('slideshow')
+        background_changed()
+    slideshow_enabled.connect('notify::active',lambda widget,*args:slideshow_toggled(widget))
+    background_type.connect('changed', background_changed);slideshow_source.connect('changed',background_changed);background_changed()
+
+    desktop_page=category('Desktop')
+    desktop_icons=switch(desktop_page,'Show desktop icons','desktop','icons')
+    desktop_folder=file_field(desktop_page,'Desktop folder',config.get('desktop','folder'),directory=True)
+    desktop_folder.set_placeholder_text('XDG Desktop folder (usually ~/Desktop)')
+    desktop_icon_size=spin(desktop_page,'Icon size (px)','desktop','icon_size',24,64)
+    field(desktop_page,'File actions',Gtk.Label(label='Right-click the desktop to create folders/files. Right-click an item to rename, copy or move it to Trash. Drag files between applications and the desktop.',wrap=True,xalign=0))
 
     inputs = category("Input")
     hover_focus = switch(inputs, "Focus on hover", "input", "focus_follows_mouse")
     modifier = combo(inputs, "Shortcut / drag modifier", [("alt", "Alt"), ("super", "Super / Windows")], config.get("input", "modifier"))
-    repeat_rate = spin(inputs, "Repeat rate (keys/s)", "input", "repeat_rate", 1, 100)
-    repeat_delay = spin(inputs, "Repeat delay (ms)", "input", "repeat_delay", 100, 1500)
+    keyboard_page=category('Keyboard')
+    repeat_rate = spin(keyboard_page, "Repeat rate (keys/s)", "input", "repeat_rate", 1, 100)
+    repeat_delay = spin(keyboard_page, "Repeat delay (ms)", "input", "repeat_delay", 100, 1500)
+    layout=field(keyboard_page,'Layout (XKB)',Gtk.Entry(text=config.get('keyboard','layout')))
+    layout.set_tooltip_text('Examples: us, fr, us,fr. Empty preserves the original backend keymap.')
+    variant=field(keyboard_page,'Variant (XKB)',Gtk.Entry(text=config.get('keyboard','variant')))
+    options=field(keyboard_page,'Options (XKB)',Gtk.Entry(text=config.get('keyboard','options')))
+    options.set_tooltip_text('Example: grp:alt_shift_toggle for switching multiple configured layouts.')
+    mouse_page=category('Mouse & touchpad')
+    pointer_controls={}
+    for label,section,key in [('Mouse: natural scrolling','mouse','natural_scroll'),('Left-handed buttons','mouse','left_handed'),
+            ('Middle-button emulation','mouse','middle_emulation'),('Tap to click','touchpad','tap'),
+            ('Tap dragging','touchpad','tap_drag'),('Drag lock','touchpad','drag_lock'),
+            ('Disable touchpad while typing','touchpad','disable_while_typing'),('Touchpad: natural scrolling','touchpad','natural_scroll')]:
+        pointer_controls[(section,key)]=switch(mouse_page,label,section,key)
+    for section,label in [('mouse','Mouse speed'),('touchpad','Touchpad speed')]:
+        slider=field(mouse_page,label,Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL,-1,1,.05))
+        slider.set_digits(2);slider.set_value(config.getfloat(section,'speed'))
+        pointer_controls[(section,'speed')]=slider
+    accel=combo(mouse_page,'Pointer acceleration',[('default','Device default'),('adaptive','Adaptive'),('flat','Flat')],config.get('mouse','accel_profile'))
+    click=combo(mouse_page,'Touchpad click method',[('default','Device default'),('clickfinger','Finger count'),('buttonareas','Button areas')],config.get('touchpad','click_method'))
+    field(mouse_page,'Device support',Gtk.Label(label='Applies to supported native libinput devices, including hotplugged devices. Nested sessions inherit host pointer processing.',wrap=True,xalign=0))
     shortcut_help = Gtk.Label(xalign=0, selectable=True, wrap=True)
     def update_shortcuts(widget=None):
         prefix = "Super" if modifier.get_active_id() == "super" else "Alt"
         floating_hint.set_text(f"{prefix}+T (also {prefix}+Space)")
         shortcut_help.set_text("\n".join(f"{prefix}+{keys}   {description}" for keys, description in
-            [("Enter", "Kitty"), ("T / Space", "Floating / tiled"), ("F", "Fullscreen"), ("M", "Maximize"), ("A", "Keep above others"),
-             ("D / Shift+D", "Apps / commands"), (",", "Settings"), ("1–9", "Workspace"),
+            [("Enter", "Konsole"), ("T / Space", "Floating / tiled"), ("F", "Fullscreen"), ("M", "Maximize"), ("A", "Keep above others"),
+             ("D / Shift+D", "Apps / commands"), ('L','Lock screen'), (",", "Settings"), ("1–9", "Workspace"),
              ("Shift+1–9", "Move to workspace"), ("Tab / Shift+Tab", "Window switcher"), ("Q", "Close window"),
-             ("Escape", "Log out"), ("left / right drag", "Move / resize")])+"\nCtrl+Shift+arrows   Move focused tile")
+             ("Escape", "Log out"), ("left / right drag", "Move / resize")])+"\nCtrl+Shift+arrows   Move focused tile\nPrint / Ctrl+Print   Save and copy screenshot\nShift+Print   Select area, save and copy")
     modifier.connect("changed", update_shortcuts);update_shortcuts()
     field(inputs, "Shortcuts", shortcut_help)
 
@@ -757,8 +1142,42 @@ def settings_window(initial_page="Windows"):
     sound_volume = field(audio, "Sound level", Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5))
     sound_volume.set_value(config.getfloat("sounds", "volume") * 100)
 
+    power_page = category("Power")
+    show_battery = switch(power_page, "Show battery in panel", "power", "show_battery")
+    battery_notifications = switch(power_page, "Battery warnings", "power", "notifications")
+    battery_low = spin(power_page, "Low battery (%)", "power", "low_percent", 5, 50)
+    battery_critical = spin(power_page, "Critical battery (%)", "power", "critical_percent", 1, 30)
+    lid_action = combo(power_page,'Closing the lid',[
+        ('auto','Automatic: suspend, or use external displays'),('suspend','Always suspend'),
+        ('ignore','Do nothing'),('system','Use system lid policy')],config.get('power','lid_action'))
+    lid_action.set_tooltip_text('Native login sessions only. Automatic switches off the built-in display while an external display is enabled.')
+    lock_sleep=switch(power_page,'Lock before sleep','locking','before_sleep')
+    lock_sleep.set_tooltip_text('Require swaylock to protect the session before sleeping. Disabling this resumes without authentication.')
+    sleep_note = Gtk.Label(xalign=0,wrap=True)
+    def sleep_description(*args):
+        sleep_note.set_text('Sleep preserves open applications in memory.\n'+
+            ('Unlock with your account password.' if lock_sleep.get_active() else 'Lock before sleep is off: resume without authentication.'))
+    lock_sleep.connect('notify::active',sleep_description);sleep_description()
+    field(power_page,'Sleep',sleep_note)
+    sleep_button=Gtk.Button(label='Sleep computer')
+    sleep_button.set_sensitive(os.environ.get('MADWAY_NATIVE')=='1')
+    sleep_button.connect('clicked',lambda button:send('sleep'))
+    field(power_page,'',sleep_button)
+    battery_notifications.set_tooltip_text("Requires application notifications to be enabled. Warnings continue when the panel is hidden or disabled.")
+    power_status = field(power_page, "Power status", Gtk.Label(xalign=0, wrap=True))
+    def update_power_status():
+        state=power_snapshot()
+        if not state.get('present'):power_status.set_text('No system battery detected')
+        else:
+            level='Level unavailable' if state.get('percent') is None else str(state['percent'])+'%'
+            power_status.set_text(level+' — '+state.get('status','Unknown'))
+        return True
+    update_power_status()
+    power_timer=GLib.timeout_add_seconds(5,update_power_status)
+    window.connect('destroy',lambda *args:GLib.source_remove(power_timer))
+
     session = category("Session")
-    for label, command in [("Application launcher", "launcher"), ("Run a command", "run"), ("Log out of madway", "logout")]:
+    for label, command in [("Application launcher", "launcher"), ("Run a command", "run"), ('Screenshot','screenshot'), ('Select screenshot area','screenshot-region'), ('Lock screen','lock'), ("Log out of madway", "logout")]:
         button = Gtk.Button(label=label);button.connect("clicked", lambda button, name=command: send(name));field(session, "", button)
     power = Gtk.Button(label="Shut down computer…")
     def shutdown(button):
@@ -768,12 +1187,34 @@ def settings_window(initial_page="Windows"):
         if response == Gtk.ResponseType.OK:send("poweroff")
     power.connect("clicked", shutdown);field(session, "", power)
 
+    scene_choices = [(key, entry['title']) for key, entry in demoscenes().items()]
+    if not scene_choices:scene_choices = [(config.get('demoscene','scene'), 'No local demoscenes installed')]
+    overlay_scene = combo(session, "Demoscene", scene_choices, config.get("demoscene", "scene"))
+    overlay_assets = file_field(session, "Demoscene assets folder", config.get('demoscene','assets'), directory=True)
+    overlay_sound = switch(session, "Demoscene sound", "demoscene", "sound")
+    overlay_passthrough = switch(session, "Click through overlay", "demoscene", "click_through")
+    overlay_button = Gtk.Button(label='Start / stop demoscene')
+    overlay_button.connect('clicked', lambda button: save() and send('overlay-toggle'))
+    field(session, 'Transparent overlay', overlay_button)
+
     panel_page = category("Panel")
     panel_enabled = switch(panel_page, "Panel", "panel", "enabled")
     panel_position = combo(panel_page, "Screen edge", [(edge, edge.capitalize()) for edge in ("top", "bottom", "left", "right")], config.get("panel", "position"))
     panel_height = spin(panel_page, "Thickness (px)", "panel", "height", 16, 32)
     panel_metrics = switch(panel_page, "CPU / RAM status", "panel", "metrics")
     panel_clock = switch(panel_page, "Clock", "panel", "clock")
+    panel_name=field(panel_page,'Panel name',Gtk.Entry(text=config.get('panel','label')))
+    panel_name.set_tooltip_text('Use @user for your account name, groxiv, or another label.')
+    panel_tasks=combo(panel_page,'Taskbar entries',[('icons','Icons only'),('names','Application names only')],config.get('panel','tasks'))
+    dock_enabled=switch(panel_page,'Application dock (Waybar)','dock','enabled')
+    dock_position=combo(panel_page,'Dock edge',[(edge,edge.capitalize()) for edge in ('bottom','top','left','right')],config.get('dock','position'))
+    dock_icons=switch(panel_page,'Dock: icons only','dock','icons_only')
+    dock_size=spin(panel_page,'Dock icon size','dock','icon_size',20,48)
+    dock_tray=switch(panel_page,'System tray / Telegram icon','dock','tray')
+    dock_tray.set_tooltip_text('Applications must enable their system-tray icon. Unread counts depend on the application.')
+    dock_autohide=switch(panel_page,'Hide dock behind maximized windows','dock','autohide')
+    dock_animate=switch(panel_page,'Animate dock (cubic Bézier)','dock','animate')
+    dock_duration=spin(panel_page,'Dock animation (ms)','dock','animation_ms',80,500)
 
     def save(button=None):
         try:
@@ -790,13 +1231,34 @@ def settings_window(initial_page="Windows"):
             if any(display_values(row) != row["original"] for row in display_rows):
                 for row in display_rows:
                     config['output:' + row['name']] = display_values(row)
+            if overlay_assets.get_text() and not Path(overlay_assets.get_text()).expanduser().is_dir():
+                raise ValueError("Demoscene assets folder does not exist")
+            desktop_path=Path(desktop_folder.get_text()).expanduser() if desktop_folder.get_text().strip() else None
+            if desktop_path and desktop_path.exists() and not desktop_path.is_dir():raise ValueError('Desktop folder must be a directory')
+            if battery_critical.get_value_as_int() >= battery_low.get_value_as_int():
+                raise ValueError("Critical battery level must be lower than the low battery level")
+            config["power"].update(show_battery=str(show_battery.get_active()).lower(), notifications=str(battery_notifications.get_active()).lower(), low_percent=str(battery_low.get_value_as_int()), critical_percent=str(battery_critical.get_value_as_int()), lid_action=lid_action.get_active_id())
+            config['locking']['before_sleep']=str(lock_sleep.get_active()).lower()
+            config["demoscene"].update(scene=overlay_scene.get_active_id(), assets=overlay_assets.get_text().strip(), sound=str(overlay_sound.get_active()).lower(), click_through=str(overlay_passthrough.get_active()).lower())
             config["appearance"].update(theme=theme_choice.get_active_id(), title_height=str(title.get_value_as_int()), tile_gap=str(gap.get_value_as_int()))
             config["windows"].update(default_mode=default_mode.get_active_id(), master_percent=str(master.get_value_as_int()))
+            config['desktop'].update(icons=str(desktop_icons.get_active()).lower(),folder=desktop_folder.get_text().strip(),icon_size=str(desktop_icon_size.get_value_as_int()))
             config["input"].update(focus_follows_mouse=str(hover_focus.get_active()).lower(), modifier=modifier.get_active_id(), repeat_rate=str(repeat_rate.get_value_as_int()), repeat_delay=str(repeat_delay.get_value_as_int()))
+            config['keyboard'].update(layout=layout.get_text().strip(),variant=variant.get_text().strip(),options=options.get_text().strip())
+            for (section,key),widget in pointer_controls.items():
+                config[section][key]=str(widget.get_value()) if key=='speed' else str(widget.get_active()).lower()
+            config['mouse']['accel_profile']=accel.get_active_id();config['touchpad']['click_method']=click.get_active_id()
+            config['workspaces'].update(animate=str(workspace_animate.get_active()).lower(),animation_ms=str(workspace_duration.get_value_as_int()))
+            config['windows'].update(animate=str(window_animate.get_active()).lower(),animation_ms=str(window_duration.get_value_as_int()))
             config["panel"].update(position=panel_position.get_active_id(), enabled=str(panel_enabled.get_active()).lower(), height=str(panel_height.get_value_as_int()),
-                metrics=str(panel_metrics.get_active()).lower(), clock=str(panel_clock.get_active()).lower())
+                metrics=str(panel_metrics.get_active()).lower(), clock=str(panel_clock.get_active()).lower(), label=panel_name.get_text().strip() or '@user',tasks=panel_tasks.get_active_id())
+            config['dock'].update(enabled=str(dock_enabled.get_active()).lower(),position=dock_position.get_active_id(),icons_only=str(dock_icons.get_active()).lower(),icon_size=str(dock_size.get_value_as_int()),tray=str(dock_tray.get_active()).lower())
+            config['dock'].update(autohide=str(dock_autohide.get_active()).lower(),animate=str(dock_animate.get_active()).lower(),animation_ms=str(dock_duration.get_value_as_int()))
             config["controls"].update(volume_step=str(volume_step.get_value_as_int()), brightness_step=str(brightness_step.get_value_as_int()))
             config["wallpaper"].update(type=background_type.get_active_id(), path=image.get_text(), mode=mode.get_active_id(), color=color.get_text())
+            config['wallpaper'].update(source=slideshow_source.get_active_id(),folder=slideshow_folder.get_text().strip(),
+                images=json.dumps(slide_paths),interval=str(slideshow_interval.get_value_as_int()),slideshow_enabled=str(slideshow_enabled.get_active()).lower())
+            wallpaper_api['validate'](config)
             config["notifications"].update(enabled=str(notifications.get_active()).lower(), indicators=str(indicators.get_active()).lower(),
                 timeout=str(timeout.get_value_as_int()), width=str(notify_width.get_value_as_int()), anchor=anchor.get_active_id())
             config["sounds"].update(enabled=str(sounds.get_active()).lower(), volume=str(sound_volume.get_value() / 100), **paths)
@@ -804,7 +1266,7 @@ def settings_window(initial_page="Windows"):
             with tempfile.NamedTemporaryFile("w", dir=CONFIG.parent, delete=False) as temporary:
                 config.write(temporary);temporary_path = Path(temporary.name)
             temporary_path.replace(CONFIG)
-            provider.load_from_data(theme_style(settings_css, config).encode())
+            provider.load_from_data(settings_styles())
             action("apply")
             status.set_text("Settings saved. Display changes are checked by the compositor.")
             GLib.timeout_add(800, display_feedback)
@@ -814,6 +1276,8 @@ def settings_window(initial_page="Windows"):
     def display_feedback():
         try:
             error = read_outputs().get("error", "")
+            input_state=json.loads((runtime_directory()/'desktop.json').read_text())
+            error=error or input_state.get('input_error','')
             if error:status.set_text(error)
         except (OSError, ValueError):pass
         return False
@@ -843,15 +1307,17 @@ def settings_window(initial_page="Windows"):
         GLib.source_remove(page_watch);page_channel.close();page_path.unlink(missing_ok=True)
     window.connect("destroy", close_channel)
     window.show_all()
+    stack.set_visible_child_name(initial_page)
     Gtk.main()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["serve", "settings", "action", "doctor"])
+    parser.add_argument("command", choices=["serve", "settings", "action", "doctor", "preset"])
     parser.add_argument("name", nargs="?")
     parser.add_argument("--compositor-pid", type=int)
     parser.add_argument("--value", type=int)
+    parser.add_argument("--scene", choices=tuple(demoscenes()))
     parser.add_argument("--page", choices=SETTINGS_PAGES, default="Windows")
     arguments = parser.parse_args()
     if arguments.command == "serve":
@@ -860,15 +1326,24 @@ def main():
         Desktop(arguments.compositor_pid).serve()
     elif arguments.command == "settings":
         settings_window(arguments.page)
+    elif arguments.command == 'preset':
+        write_settings(desktop_preset(settings(), arguments.name))
+        print('Gershwin preset saved to '+str(CONFIG))
+        if not (SHARE/'wallpapers'/'Abstract Blue.png').is_file():
+            print('Original wallpaper is unavailable; using Gershwin background color.')
+        try:action('apply')
+        except (OSError, RuntimeError, KeyError):pass
     elif arguments.command == "doctor":
         print(json.dumps({"programs": {name: shutil.which(name) for name in
-            ["mako", "wofi", "swaybg", "kitty", "grim", "wpctl", "pactl", "brightnessctl", "busctl", "pw-play", "paplay"]},
+            ["mako", "wofi", "swaybg", "swaylock", "konsole", "waybar", "grim", "slurp", "wl-copy", "wpctl", "pactl", "brightnessctl", "busctl", "pw-play", "paplay"]},
             "backlight": [path.name for path in Path("/sys/class/backlight").glob("*")],
+            "battery": battery_state(),
             "settings": str(CONFIG)}, indent=2))
     else:
         if not arguments.name:
             parser.error("action requires an action name")
         values = {"value": arguments.value} if arguments.value is not None else {}
+        if arguments.scene is not None:values["scene"] = arguments.scene
         action(arguments.name, **values)
 
 

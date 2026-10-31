@@ -24,6 +24,8 @@ set input.focus_follows_mouse true
     assert commands[1]==('exec',['kitty','--title','Work terminal'])
     assert commands[0][1]['value']==1 and commands[3][1]['value']==2
     assert commands[-2][1]['updates']['wallpaper.path']==str(base/'wall paper.png')
+    assert parse('overlay toggle',base)[0][1]['action']=='overlay-toggle'
+    assert parse('overlay stop',base)[0][1]['action']=='overlay-stop'
     assert parse('window toggle-above',base)[0][1]['action']=='window-above'
     assert parse('set panel.position left',base)[0][1]['updates']=={'panel.position':'left'}
     # Shell syntax stays literal argv. No interpolation or shell eval.
@@ -39,10 +41,10 @@ set input.focus_follows_mouse true
     except ValueError as error:assert 'Line 2:' in str(error)
     else:raise AssertionError('Partial script accepted')
 profiles=api['api']['themes']()
-assert set(profiles.sections())=={'black','amber','terminal','slate','paper'}
+assert set(profiles.sections())=={'gershwin','gershwin-dark','black','amber','terminal','slate','paper'}
 for name in profiles:
     if name=='DEFAULT':continue
     cfg=api['api']['settings']();cfg['appearance']['theme']=name
     style=api['api']['theme_style']('background: #000000; color: #c8c8c8;',cfg)
     assert profiles[name]['background'] in style and profiles[name]['text'] in style
-print('PASS: script grammar, quotes/colors/relative paths, full-file validation, and five theme profiles.')
+print('PASS: script grammar, quotes/colors/relative paths, full-file validation, and seven theme profiles.')

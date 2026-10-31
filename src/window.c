@@ -4,6 +4,8 @@
 #include "decoration.h"
 #include "workspace.h"
 #include "session.h"
+#include "input.h"
+#include "motion.h"
 
 #include <linux/input-event-codes.h>
 #include <wlr/util/edges.h>
@@ -61,6 +63,25 @@ void madway_set_keep_above(struct madway_view *view, bool above)
     if (madway_view_visible(view)) madway_focus_view(view->server, view);
 }
 
+void madway_set_minimized(struct madway_view *view, bool minimized)
+{
+    if (view->minimized == minimized || !view->mapped || view->desktop_overlay) return;
+    struct madway_server *server = view->server;
+    if (server->interactive_view == view) {
+        if (!server->interactive_forward_button) server->consumed_button = server->interactive_button;
+        madway_end_interactive(server);
+    }
+    madway_cancel_pointer_grab(server);
+    madway_motion_prepare(view);
+    bool focused = server->focused_view == view;
+    if (minimized && focused) madway_focus_view(server, NULL);
+    view->minimized = minimized;
+    madway_workspace_arrange(server);
+    if (minimized && focused) madway_workspace_focus(server);
+    else if (!minimized && madway_view_visible(view)) madway_focus_view(server, view);
+    madway_motion_start(view,minimized,!minimized);
+}
+
 void madway_set_maximized(struct madway_view *view, bool maximized)
 {
     if (view->fullscreen)
@@ -73,12 +94,14 @@ void madway_set_maximized(struct madway_view *view, bool maximized)
         wlr_xdg_toplevel_set_maximized(view->toplevel, maximized);
         return;
     }
+    madway_motion_prepare(view);
     if (maximized && !view->maximized) save_geometry(view);
     view->maximized = maximized;
     wlr_xdg_toplevel_set_maximized(view->toplevel, maximized);
     if (!maximized && view->floating) madway_apply_window_state(view);
     madway_workspace_arrange(view->server);
     if (maximized && madway_view_visible(view)) madway_focus_view(view->server, view);
+    madway_motion_start(view,false,false);
 }
 
 void madway_set_fullscreen(struct madway_view *view, bool fullscreen)
@@ -111,6 +134,7 @@ void madway_begin_interactive(struct madway_view *view,
         enum madway_interactive_mode mode, uint32_t edges)
 {
     struct madway_server *server = view->server;
+    madway_motion_finish(server);
     if (view->maximized || view->fullscreen || !madway_view_visible(view)) return;
     if (!view->floating && (mode != MADWAY_RESIZE || !madway_tile_resize_begin(view, edges))) return;
     madway_focus_view(server, view);
@@ -149,7 +173,12 @@ void madway_end_interactive(struct madway_server *server)
                 view->scene_tree->node.y + view->toplevel->base->geometry.height / 2);
         struct madway_output *output;
         wl_list_for_each(output, &server->outputs, link)
-            if (output->output == target) { view->output = output; break; }
+            if (output->output == target) {
+                bool changed = view->output != output;
+                view->output = output;
+                if (changed) madway_session_publish_state(server);
+                break;
+            }
     }
     server->interactive_neighbor_id = 0;
     server->interactive_view = NULL;

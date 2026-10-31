@@ -25,10 +25,16 @@ with tempfile.TemporaryDirectory(prefix="mw-desktop-") as tmp:
     sounds=root/"sounds";sounds.mkdir()
     for event in ("startup", "logout", "shutdown"):
         (sounds/(event+".ogg")).write_bytes(b"mock audio fixture")
-    config_path.write_text('[appearance]\ntitle_height=18\ntile_gap=2\n[sounds]\nenabled=true\nvolume=0.1\n'+
+    config_path.write_text('[desktop]\nicons=false\n[dock]\nenabled=false\n[appearance]\ntitle_height=18\ntile_gap=2\n[sounds]\nenabled=true\nvolume=0.1\n'+
         ''.join(f'{event}={sounds / (event+".ogg")}\n' for event in ("startup", "logout", "shutdown")))
     bin_dir=root/"bin";bin_dir.mkdir()
     hardware=root/"hardware.json";hardware.write_text(json.dumps(dict(volume=50,mute=False,brightness=50)))
+    power_root=root/'power';power_root.mkdir()
+    def power_device(name,**values):
+        path=power_root/name;path.mkdir(exist_ok=True)
+        for key,value in values.items():(path/key).write_text(str(value))
+    power_device('AC',type='Mains',online=0)
+    power_device('BAT0',type='Battery',present=1,capacity=80,status='Discharging',energy_now=8000000,energy_full=10000000,power_now=1000000)
     audio_log=root/"audio.log"
     for name in ["wpctl","brightnessctl","pw-play","paplay"]:
         path=bin_dir/name
@@ -67,7 +73,7 @@ else:
 """)
     pactl.write_text(pactl.read_text().replace('HARDWARE',repr(str(hardware))))
     pactl.chmod(0o700)
-    kitty=bin_dir/"kitty"
+    kitty=bin_dir/"konsole"
     kitty.write_text('#!/bin/sh\nexec /usr/bin/kitty --config NONE --title floating-fixture -o linux_display_server=wayland -o confirm_os_window_close=0 /bin/sh -c "sleep 30"\n')
     kitty.chmod(0o700)
     marker=root/"launched"
@@ -86,7 +92,7 @@ else:
     env=os.environ.copy()
     env.update(HOME=str(home),XDG_CONFIG_HOME=str(config_home),XDG_DATA_HOME=str(data_home),
         XDG_RUNTIME_DIR=str(runtime),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='2',WLR_RENDERER='pixman',LIBGL_ALWAYS_SOFTWARE='1',MADWAY_SESSION='1',
-        PATH=str(bin_dir)+':'+env['PATH'],MADWAY_LAUNCH_TEST_READY=str(ready),MADWAY_TEST_HOTPLUG=str(root/'hotplug'),MADWAY_TEST_MENU_READY=str(root/'menu-ready'),MADWAY_TEST_FEATURES_READY=str(root/'features-ready'))
+        PATH=str(bin_dir)+':'+env['PATH'],MADWAY_POWER_SUPPLY_PATH=str(power_root),MADWAY_LAUNCH_TEST_READY=str(ready),MADWAY_TEST_HOTPLUG=str(root/'hotplug'),MADWAY_TEST_MENU_READY=str(root/'menu-ready'),MADWAY_TEST_FEATURES_READY=str(root/'features-ready'))
     env.pop('DISPLAY',None)
     env.pop('MADWAY_NATIVE',None)
     server_env=env.copy();server_env['LD_PRELOAD']=str(probe)
@@ -124,6 +130,7 @@ else:
             wait_for(lambda:'RUN LAUNCHER PASS' in log_path.read_text(),12)
             wait_for(lambda:'APP LAUNCHER PASS' in log_path.read_text(),12)
             wait_for(lambda:'SETTINGS WINDOW AND MEDIA KEYS PASS' in log_path.read_text(),12)
+            wait_for(lambda:any(path.stat().st_size>8 for path in home.rglob('madway-*.png')))
             wait_for(lambda:json.loads(hardware.read_text())['volume']==55 and json.loads(hardware.read_text())['brightness']==55)
             assert marker.read_text().splitlines()==[env['WAYLAND_DISPLAY']]*2
             control('volume-mute')
@@ -202,7 +209,17 @@ else:
             config['panel'].update(enabled='true',height='22');apply_config()
             wait_for(lambda:'PANEL HEIGHT RELOAD PASS' in log_path.read_text())
             print('PASS: desktop right-click menu/window action, fullscreen panel hiding, and workspace controls.')
-            subprocess.run([sys.executable,str(repo/'tests/panel_ui.py')],env=env,check=True,timeout=10)
+            subprocess.run([sys.executable,str(repo/'tests/panel_ui.py')],env=env,check=True,timeout=20)
+            rows=json.loads(desktop_file.read_text())['windows']
+            assert rows, 'Expected a real application for minimize/restore'
+            identity=rows[0]['id']
+            control('switcher-select',id=identity)
+            wait_for(lambda:any(row['id']==identity and row['focused'] for row in json.loads(desktop_file.read_text())['windows']))
+            control('window-minimize')
+            wait_for(lambda:any(row['id']==identity and row['minimized'] for row in json.loads(desktop_file.read_text())['windows']))
+            control('switcher-select',id=identity)
+            wait_for(lambda:any(row['id']==identity and row['focused'] and not row['minimized'] for row in json.loads(desktop_file.read_text())['windows']))
+            print('PASS: real application minimize and panel restoration action.')
             for values, expected in [
                 (dict(kind='sink-input',id=7,operation='volume',value=160), ['set-sink-input-volume','7','100%']),
                 (dict(kind='source',id=7,operation='mute',value=True), ['set-source-mute','7','1']),
@@ -238,6 +255,25 @@ else:
                 config.read(config_path);config['panel']['position']=position;apply_config()
                 wait_for(lambda:'PANEL EDGE '+position+' RESERVATION PASS' in log_path.read_text())
             print('PASS: always-above stacking/input/fullscreen, tiled resizing, and all four panel-edge reservations.')
+            # Real Mako receives power alerts; only the private fake sysfs is modified.
+            power_file=outputs_file.parent/'power.json'
+            def power_summary():
+                return subprocess.check_output(['makoctl','list'],env=env,text=True)
+            power_device('BAT0',capacity=18,energy_now=1800000)
+            control('power-refresh')
+            wait_for(lambda:json.loads(power_file.read_text()).get('percent')==18)
+            wait_for(lambda:'Battery low' in power_summary())
+            power_device('BAT0',capacity=9,energy_now=900000)
+            control('power-refresh')
+            wait_for(lambda:'Battery critical' in power_summary())
+            power_device('AC',online=1);power_device('BAT0',status='Charging')
+            control('power-refresh')
+            wait_for(lambda:json.loads(power_file.read_text()).get('status')=='Charging')
+            try:wait_for(lambda:'Battery critical' not in power_summary())
+            except AssertionError:
+                print('POWER NOTIFICATIONS STILL OPEN:',power_summary())
+                raise
+            print('PASS: live battery snapshot, real low/critical notifications and dismissal on charging using fake power supplies.')
             control('shutdown-sound')
             wait_for(lambda:audio_log.exists() and 'shutdown.ogg' in audio_log.read_text())
             assert 'startup.ogg' in audio_log.read_text()

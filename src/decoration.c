@@ -1,6 +1,7 @@
 #include "decoration.h"
 #include "main.h"
 #include "view.h"
+#include "eau.h"
 
 #include <cairo.h>
 #include <drm_fourcc.h>
@@ -46,7 +47,7 @@ static const struct wlr_buffer_impl title_impl = {
 int madway_frame_title_height(struct madway_view *view)
 {
     int height = view->server->config.title_height;
-    return view->compact_frame && height > 14 ? 14 : height;
+    return view->compact_frame && !view->server->config.eau && height > 14 ? 14 : height;
 }
 
 static struct wlr_buffer *draw_title(struct madway_view *view, int width)
@@ -63,6 +64,10 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
     }
     bool active = view->server->focused_view == view;
     cairo_t *cr = cairo_create(pixels->surface);
+    if (view->server->config.eau) {
+        madway_eau_title(cr, view, width, title_height);
+        goto complete;
+    }
     const float *background = active ? view->server->config.active : view->server->config.surface;
     cairo_set_source_rgb(cr, background[0], background[1], background[2]);
     cairo_paint(cr);
@@ -100,6 +105,7 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
     cairo_move_to(cr, width - 5, 5);
     cairo_line_to(cr, width - 12, 12);
     cairo_stroke(cr);
+complete:
     cairo_destroy(cr);
     cairo_surface_flush(pixels->surface);
     wlr_buffer_init(&pixels->base, &title_impl, width, title_height);
@@ -108,6 +114,8 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
 
 bool madway_frame_create(struct madway_view *view)
 {
+    view->shadow_tree = wlr_scene_tree_create(view->scene_tree);
+    if (view->shadow_tree == NULL) return false;
     const float *highlight = view->server->config.border;
     const float shadow[4] = {0, 0, 0, 1};
     for (int i = 0; i < 4; ++i)
@@ -133,11 +141,15 @@ void madway_frame_update(struct madway_view *view)
     bool visible = border != 0;
     int width = view->toplevel->base->geometry.width;
     int height = view->toplevel->base->geometry.height;
+    bool rounded = view->server->config.eau && title_height > 0;
+    madway_eau_shadow(view, width + 2, height + title_height + 2,
+            rounded && visible && !view->maximized && !view->fullscreen);
     if (view->content_tree != NULL)
         wlr_scene_node_set_position(&view->content_tree->node, border, title_height + border);
     for (int i = 0; i < 4; ++i)
         wlr_scene_node_set_enabled(&view->borders[i]->node, visible);
     wlr_scene_node_set_enabled(&view->title_buffer->node, title_height > 0);
+    if (rounded) wlr_scene_node_set_enabled(&view->borders[0]->node, false);
     bool active = view->server->focused_view == view;
     const char *title = view->toplevel->title != NULL ? view->toplevel->title : "madway";
     if (!visible || width <= 0 || height <= 0)
@@ -152,15 +164,17 @@ void madway_frame_update(struct madway_view *view)
 
     const float *highlight = view->server->config.border;
     const float shadow[4] = {0, 0, 0, 1};
+    const float *edge_shadow = view->server->config.eau ? highlight : shadow;
     const float *focus = view->server->config.accent;
     for (int i = 0; i < 4; ++i)
-        wlr_scene_rect_set_color(view->borders[i], title_height == 0 && active ? focus : i < 2 ? highlight : shadow);
+        wlr_scene_rect_set_color(view->borders[i], title_height == 0 && active ? focus : i < 2 ? highlight : edge_shadow);
 
     wlr_scene_rect_set_size(view->borders[0], width + 2, 1);
-    wlr_scene_rect_set_size(view->borders[1], 1, height + title_height + 1);
-    wlr_scene_node_set_position(&view->borders[1]->node, 0, 1);
-    wlr_scene_rect_set_size(view->borders[2], 1, height + title_height + 1);
-    wlr_scene_node_set_position(&view->borders[2]->node, width + 1, 1);
+    int start = rounded ? 7 : 1;
+    wlr_scene_rect_set_size(view->borders[1], 1, height + title_height + 2 - start);
+    wlr_scene_node_set_position(&view->borders[1]->node, 0, start);
+    wlr_scene_rect_set_size(view->borders[2], 1, height + title_height + 2 - start);
+    wlr_scene_node_set_position(&view->borders[2]->node, width + 1, start);
     wlr_scene_rect_set_size(view->borders[3], width + 2, 1);
     wlr_scene_node_set_position(&view->borders[3]->node, 0, height + title_height + 1);
     wlr_scene_node_set_position(&view->title_buffer->node, 1, 1);
@@ -199,6 +213,14 @@ enum madway_frame_part madway_frame_at(struct madway_view *view, double lx, doub
     int width = view->toplevel->base->geometry.width;
     if (x < 1 || x >= width + 1 || y < 1 || y >= madway_frame_title_height(view) + 1)
         return MADWAY_FRAME_NONE;
+    if (view->server->config.eau) {
+        int button = madway_eau_button_width(width, madway_frame_title_height(view));
+        x -= 1;
+        if (x < button) return MADWAY_FRAME_CLOSE;
+        if (x >= width - button) return MADWAY_FRAME_MAXIMIZE;
+        if (x >= width - 2 * button) return MADWAY_FRAME_MINIMIZE;
+        return MADWAY_FRAME_TITLE;
+    }
     if (x >= width - 15) return MADWAY_FRAME_CLOSE;
     if (x >= width - 31) return MADWAY_FRAME_MAXIMIZE;
     return MADWAY_FRAME_TITLE;

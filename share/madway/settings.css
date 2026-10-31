@@ -1,0 +1,30 @@
+/* Compact workstation controls. Each compound widget gets one outer frame. */
+.settings-window * { font-size: 12px; border-radius: 0; box-shadow: none; text-shadow: none; }
+.settings-window { background: @background@; color: @text@; }
+.settings-window label { color: @text@; padding: 0; }
+.settings-window stacksidebar { background: transparent; padding: 2px 0; border: 0; border-right: 1px solid @border@; }
+.settings-window stacksidebar viewport, .settings-window stacksidebar list { background: transparent; border: 0; padding: 0; }
+.settings-window stacksidebar row { min-height: 16px; margin: 0 5px 1px 0; padding: 4px 6px; border: 0; border-left: 2px solid transparent; background: transparent; background-image: none; }
+.settings-window stacksidebar row label { color: @muted@; border: 0; padding: 0; }
+.settings-window stacksidebar row:hover { background: @surface@; }
+.settings-window stacksidebar row:selected { background: @surface@; border-left-color: @accent@; }
+.settings-window stacksidebar row:selected label { color: @text@; font-weight: 600; }
+.settings-window stacksidebar separator { min-height: 0; border: 0; background: transparent; }
+.settings-window button, .settings-window entry, .settings-window spinbutton {
+    min-height: 20px; padding: 1px 6px; border: 1px solid @border@; border-radius: 1px;
+    background: @surface@; background-image: none; color: @text@; box-shadow: none;
+}
+.settings-window button:hover, .settings-window button:focus, .settings-window entry:focus, .settings-window spinbutton:focus { border-color: @accent@; box-shadow: none; }
+.settings-window button:active { background: @active@; }
+.settings-window combobox, .settings-window combobox > box { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
+.settings-window combobox button { min-height: 20px; padding: 1px 6px; border: 1px solid @border@; border-radius: 1px; background: @surface@; background-image: none; box-shadow: none; }
+.settings-window spinbutton { padding: 0; }
+.settings-window spinbutton entry { min-height: 20px; padding: 1px 6px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.settings-window spinbutton button { min-width: 14px; min-height: 20px; padding: 0 3px; border: 0; border-left: 1px solid @border@; border-radius: 0; background: transparent; box-shadow: none; }
+.settings-window switch { min-width: 28px; min-height: 14px; padding: 1px; border: 1px solid @border@; border-radius: 1px; background: @surface@; background-image: none; }
+.settings-window switch slider { min-width: 12px; min-height: 12px; padding: 0; border: 1px solid @border@; border-radius: 0; background: @muted@; background-image: none; }
+.settings-window switch:checked slider { background: @accent@; }
+.settings-window scale { min-height: 18px; padding: 2px 5px; }
+.settings-window scale trough { min-height: 3px; border: 0; border-radius: 0; background: @border@; }
+.settings-window scale highlight { border: 0; border-radius: 0; background: @accent@; background-image: none; }
+.settings-window scale slider { min-width: 8px; min-height: 12px; margin: 0; padding: 0; border: 1px solid @border@; border-radius: 1px; background: @text@; background-image: none; }

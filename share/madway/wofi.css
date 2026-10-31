@@ -2,8 +2,10 @@
 window { background: #080808; color: #d0d0d0; border: 1px solid #383838; }
 #input { margin: 0; padding: 7px 9px; min-height: 0; background: #101010; color: #eeeeee; border: 0; border-bottom: 1px solid #303030; box-shadow: none; }
 #input image { -gtk-icon-transform: scale(0.75); }
-#scroll { margin: 3px; }
+/* Wofi's dynamic line height excludes scroll margins: they clip the last row. */
+#scroll { margin: 0; padding: 0; border: 0; }
 #entry { min-height: 0; padding: 3px 6px; }
 #entry:selected { background: #282828; color: #ffffff; }
 #text:selected { color: #ffffff; }
 #outer-box, #inner-box { margin: 0; padding: 0; }
+#outer-box { padding: 3px; }

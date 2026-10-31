@@ -6,40 +6,90 @@
 #include "layer.h"
 #include "session.h"
 #include "monitors.h"
+#include "power.h"
+#include "lock.h"
+#include "taskbar.h"
+#include "transition.h"
+#include "animation.h"
+#include <wlr/backend/session.h>
 
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <limits.h>
 #include <sys/wait.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_data_control_v1.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
+#include <wlr/types/wlr_damage_ring.h>
 #include <wlr/util/log.h>
+
+static bool output_can_render(struct madway_output *output)
+{
+    return !output->server->shutting_down && !output->server->sleeping && output->output->enabled &&
+        (output->server->session==NULL || output->server->session->active);
+}
+
+static int retry_output_frame(void *data)
+{
+    struct madway_output *output=data;
+    output->frame_retry_pending=false;
+    if (output_can_render(output)) wlr_output_schedule_frame(output->output);
+    else output->failed_frames=0;
+    return 0;
+}
 
 static void handle_output_frame(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_output *output = wl_container_of(listener, output, frame);
     struct wlr_output *display_output = output->output;
+    if (!output_can_render(output)) {
+        wl_event_source_timer_update(output->frame_retry,0);
+        output->frame_retry_pending=false;output->failed_frames=0;
+        return;
+    }
+    if (output->frame_retry_pending) return;
 
+    // Advance once per output frame, using its own backend/vblank cadence.
+    madway_animation_frame(output);
     // The scene tracks changed regions and draws its nodes using our renderer.
     bool needs_frame = wlr_scene_output_needs_frame(output->scene_output);
     if (needs_frame && !wlr_scene_output_commit(output->scene_output, NULL))
     {
-        wlr_log(WLR_ERROR, "Could not commit the scene for %s", display_output->name);
+        if (output->failed_frames<UINT_MAX) ++output->failed_frames;
+        // Building/submitting a frame may already have consumed its damage.
+        // Restore it and retry independently of input or animation activity.
+        wlr_damage_ring_add_whole(&output->scene_output->damage_ring);
+        int period=display_output->refresh>0?(int)((1000000LL+display_output->refresh-1)/display_output->refresh):16;
+        if (period<5) period=5;
+        if (period>50) period=50;
+        unsigned shift=output->failed_frames>5?4:output->failed_frames-1;
+        int delay=period*(1<<shift);
+        if (delay>250) delay=250;
+        output->frame_retry_pending=true;
+        wl_event_source_timer_update(output->frame_retry,delay);
+        if (output->failed_frames==1 || (output->failed_frames&(output->failed_frames-1))==0)
+            wlr_log(WLR_ERROR,"Could not commit the scene for %s; retrying in %d ms (failure %u)",display_output->name,delay,output->failed_frames);
         return;
+    }
+    if (needs_frame && output->failed_frames) {
+        wlr_log(WLR_INFO,"Scene commits recovered on %s after %u failed attempt(s)",display_output->name,output->failed_frames);
+        output->failed_frames=0;
     }
 
     // Notify visible application surfaces so they can pace their drawing.
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     wlr_scene_output_send_frame_done(output->scene_output, &now);
+    if (madway_animation_active(output)) wlr_output_schedule_frame(display_output);
 
     if (needs_frame && !output->first_frame_drawn)
     {
@@ -55,7 +105,11 @@ static void handle_output_request_state(struct wl_listener *listener, void *data
     struct wlr_output_event_request_state *event = data;
 
     // A nested window requests a new output size when the user resizes it.
-    if (!wlr_output_commit_state(output->output, event->state))
+    struct wlr_output_state state;wlr_output_state_init(&state);
+    bool ok=wlr_output_state_copy(&state,event->state) && madway_lock_secure_output(output,&state) &&
+        wlr_output_commit_state(output->output,&state);
+    wlr_output_state_finish(&state);
+    if (!ok)
     {
         wlr_log(WLR_ERROR, "Could not apply requested state for %s", output->output->name);
         return;
@@ -70,10 +124,12 @@ static void handle_output_destroy(struct wl_listener *listener, void *data)
     struct madway_output *output = wl_container_of(listener, output, destroy);
     struct madway_server *server = output->server;
 
+    if (output->frame_retry) wl_event_source_remove(output->frame_retry);
     wl_list_remove(&output->frame.link);
     wl_list_remove(&output->request_state.link);
     wl_list_remove(&output->destroy.link);
     wl_list_remove(&output->link);
+    madway_lock_remove_output(output);
     madway_layer_output_destroy(server, output->output);
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
@@ -96,7 +152,7 @@ static void handle_output_destroy(struct wl_listener *listener, void *data)
     madway_arrange_outputs(server);
 
     // Closing the last nested window ends this demonstration.
-    if (wl_list_empty(&server->outputs))
+    if (wl_list_empty(&server->outputs) && server->session == NULL)
     {
         wl_display_terminate(server->display);
     }
@@ -128,7 +184,8 @@ static void handle_new_output(struct wl_listener *listener, void *data)
     const float black[4] = {0, 0, 0, 1};
     output->scene_output = wlr_scene_output_create(server->scene, display_output);
     output->background = wlr_scene_rect_create(server->backgrounds, 0, 0, black);
-    if (output->scene_output == NULL || output->background == NULL)
+    output->frame_retry=wl_event_loop_add_timer(wl_display_get_event_loop(server->display),retry_output_frame,output);
+    if (output->scene_output == NULL || output->background == NULL || output->frame_retry==NULL || !madway_lock_add_output(output))
     {
         wlr_log(WLR_ERROR, "Could not create scene objects for %s", display_output->name);
         if (output->scene_output != NULL)
@@ -139,6 +196,7 @@ static void handle_new_output(struct wl_listener *listener, void *data)
         {
             wlr_scene_node_destroy(&output->background->node);
         }
+        if (output->frame_retry) wl_event_source_remove(output->frame_retry);
         free(output);
         return;
     }
@@ -168,7 +226,7 @@ static void handle_new_output(struct wl_listener *listener, void *data)
     {
         wlr_output_state_set_mode(&state, mode);
     }
-    bool enabled = wlr_output_commit_state(display_output, &state);
+    bool enabled = madway_lock_secure_output(output,&state) && wlr_output_commit_state(display_output, &state);
     wlr_output_state_finish(&state);
 
     if (!enabled)
@@ -256,6 +314,7 @@ int main(int argc, char *argv[])
     wl_list_init(&server.keyboards);
     wl_list_init(&server.pointers);
     wl_list_init(&server.layers);
+    wl_list_init(&server.switches);
     madway_session_reload(&server);
     int result = EXIT_FAILURE;
 
@@ -302,6 +361,7 @@ int main(int argc, char *argv[])
         wlr_subcompositor_create(server.display) == NULL ||
         wlr_screencopy_manager_v1_create(server.display) == NULL ||
         wlr_data_device_manager_create(server.display) == NULL ||
+        wlr_data_control_manager_v1_create(server.display) == NULL ||
         wlr_primary_selection_v1_device_manager_create(server.display) == NULL)
     {
         wlr_log(WLR_ERROR, "Could not initialize rendering resources");
@@ -314,9 +374,11 @@ int main(int argc, char *argv[])
         wlr_log(WLR_ERROR, "Could not create the scene graph");
         goto cleanup;
     }
-    server.backgrounds = wlr_scene_tree_create(&server.scene->tree);
-    server.windows = wlr_scene_tree_create(&server.scene->tree);
-    server.above_windows = wlr_scene_tree_create(&server.scene->tree);
+    server.desktop_tree=wlr_scene_tree_create(&server.scene->tree);
+    if(server.desktop_tree==NULL)goto cleanup;
+    server.backgrounds = wlr_scene_tree_create(server.desktop_tree);
+    server.windows = wlr_scene_tree_create(server.desktop_tree);
+    server.above_windows = wlr_scene_tree_create(server.desktop_tree);
     if (server.backgrounds == NULL || server.windows == NULL || server.above_windows == NULL ||
         !madway_init_shell(&server))
     {
@@ -327,7 +389,7 @@ int main(int argc, char *argv[])
     server.output_layout = wlr_output_layout_create(server.display);
     if (server.output_layout == NULL ||
         wlr_xdg_output_manager_v1_create(server.display, server.output_layout) == NULL ||
-        !madway_init_input(&server) || !madway_init_layers(&server) || !madway_init_monitors(&server))
+        !madway_init_input(&server) || !madway_init_layers(&server) || !madway_init_monitors(&server) || !madway_lock_init(&server) || !madway_taskbar_init(&server))
     {
         wlr_log(WLR_ERROR, "Could not initialize input handling");
         goto cleanup;
@@ -339,6 +401,7 @@ int main(int argc, char *argv[])
         wlr_log(WLR_ERROR, "Could not create the Wayland socket in XDG_RUNTIME_DIR");
         goto cleanup;
     }
+    madway_power_init(&server);
 
     if (!madway_session_init(&server))
     {
@@ -354,9 +417,9 @@ int main(int argc, char *argv[])
     }
 
     wlr_log(WLR_INFO, "Listening on WAYLAND_DISPLAY=%s", server.socket_name);
-    wlr_log(WLR_INFO, "Launch a client from another terminal: WAYLAND_DISPLAY=%s kitty -o linux_display_server=wayland",
+    wlr_log(WLR_INFO, "Launch a client from another terminal: WAYLAND_DISPLAY=%s konsole --separate --platform wayland",
             server.socket_name);
-    wlr_log(WLR_INFO, "Modifier=%s; Enter: Kitty; T/Space: floating; D: apps; Shift+D: commands; Comma: settings; 1..9: workspace",
+    wlr_log(WLR_INFO, "Modifier=%s; Enter: Konsole; T/Space: floating; D: apps; Shift+D: commands; Comma: settings; 1..9: workspace",
             server.config.use_super ? "Super" : "Alt");
     madway_session_start(&server);
 
@@ -366,11 +429,14 @@ int main(int argc, char *argv[])
 
     // cleanup
 cleanup:
+    madway_transition_finish(&server);
     madway_session_stop(&server);
     server.shutting_down = true;
+    madway_power_finish(&server);
     madway_session_finish(&server);
     madway_finish_monitors(&server);
     wl_display_destroy_clients(server.display);
+    madway_lock_finish(&server);
     if (server.xdg_shell != NULL)
     {
         wl_list_remove(&server.new_toplevel.link);

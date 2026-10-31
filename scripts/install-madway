@@ -8,10 +8,16 @@ build_dir="$madway_root/build-install"
 destdir=
 dry_run=false
 install_deps=false
+build_demoscene=false
+demoscene_assets=
+raylib_source=
 usage() {
     cat <<'EOF'
 Usage: ./scripts/install-madway [options]
   --dry-run             Print the build/install commands without changing files
+  --demoscene           Also build the native Wayland transparent overlay
+  --demoscene-assets DIR Use original local demoscene media (not copied/installed)
+  --raylib-source DIR   Reuse raylib 5.0 sources for an offline overlay build
   --deps                Install Arch/CachyOS dependencies with pacman
   --prefix PATH         Binary/data prefix (default /usr/local)
   --sessions-dir PATH   Login session directory (default /usr/share/wayland-sessions)
@@ -29,7 +35,8 @@ while (($#)); do
     case "$1" in
         --dry-run) dry_run=true; shift ;;
         --deps) install_deps=true; shift ;;
-        --prefix|--sessions-dir|--build-dir|--destdir)
+        --demoscene) build_demoscene=true; shift ;;
+        --prefix|--sessions-dir|--build-dir|--destdir|--demoscene-assets|--raylib-source)
             option=$1
             [[ $# -ge 2 && -n $2 ]] || { echo "$1 requires a path" >&2; exit 2; }
             case "$option" in
@@ -37,6 +44,8 @@ while (($#)); do
                 --sessions-dir) sessions_dir=$2 ;;
                 --build-dir) build_dir=$2 ;;
                 --destdir) destdir=$2 ;;
+                --demoscene-assets) demoscene_assets=$2; build_demoscene=true ;;
+                --raylib-source) raylib_source=$2; build_demoscene=true ;;
             esac
             shift 2 ;;
         --help|-h) usage; exit 0 ;;
@@ -62,14 +71,18 @@ elevate=()
 if [[ -z $destdir && $EUID -ne 0 ]]; then elevate=(sudo); fi
 if [[ $install_deps == true ]]; then
     command -v pacman >/dev/null || { echo '--deps supports Arch/CachyOS; on other distributions install the README dependencies first.' >&2; exit 1; }
-    run "${elevate[@]}" pacman -S --needed base-devel cmake pkgconf wlroots0.20 wayland wayland-protocols libxkbcommon pango glib2 \
-        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg kitty wireplumber libnotify pipewire pipewire-pulse libpulse brightnessctl grim
+    run "${elevate[@]}" pacman -S --needed base-devel cmake pkgconf wlroots0.20 wayland wayland-protocols libxkbcommon pango glib2 libinput \
+        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg swaylock konsole waybar slurp wl-clipboard xdg-user-dirs wireplumber libnotify pipewire pipewire-pulse libpulse brightnessctl grim
+    if [[ $build_demoscene == true ]]; then run "${elevate[@]}" pacman -S --needed glfw git; fi
 fi
 if [[ $dry_run == false ]]; then
-    for program in cmake cc pkg-config python3 wayland-scanner dbus-run-session kitty mako wofi swaybg wpctl pactl notify-send; do
+    if [[ $build_demoscene == true ]]; then
+        pkg-config --atleast-version=3.4 glfw3 || { echo "The overlay requires GLFW 3.4+ with Wayland support." >&2; exit 1; }
+    fi
+    for program in cmake cc pkg-config python3 wayland-scanner dbus-run-session konsole waybar slurp wl-copy mako wofi swaybg swaylock wpctl pactl notify-send; do
         command -v "$program" >/dev/null || { echo "Missing dependency: $program. Use --deps on Arch/CachyOS or see README.md." >&2; exit 1; }
     done
-    pkg-config --exists wlroots-0.20 wayland-server xkbcommon pangocairo gio-2.0 || {
+    pkg-config --exists wlroots-0.20 wayland-server xkbcommon pangocairo gio-2.0 libinput || {
         echo 'Missing development dependencies; wlroots-0.20 is required.' >&2; exit 1;
     }
     for feature in have_drm_backend have_libinput_backend have_session; do
@@ -84,7 +97,14 @@ gi.require_version('GtkLayerShell', '0.1')
 from gi.repository import Gtk, GtkLayerShell, Gio
 PY
 fi
-run cmake -S "$madway_root" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$prefix"
+demoscene_options=("-DMADWAY_BUILD_DEMOSCENE=$build_demoscene")
+if [[ $build_demoscene == true && -n $demoscene_assets ]]; then
+    demoscene_options+=("-DMADWAY_DEMOSCENE_ASSET_DIR=$demoscene_assets")
+fi
+if [[ -n $raylib_source ]]; then
+    demoscene_options+=("-DFETCHCONTENT_SOURCE_DIR_RAYLIB=$raylib_source")
+fi
+run cmake -S "$madway_root" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$prefix" "${demoscene_options[@]}"
 run cmake --build "$build_dir" --parallel 2
 if [[ -n $destdir ]]; then
     run env "DESTDIR=$destdir" cmake --install "$build_dir"

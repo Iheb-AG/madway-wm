@@ -1,0 +1,31 @@
+window { background: transparent; }
+/* Eau+Menu.m: top .95/.80 opacity, bottom .85/.70; no blur. */
+.bar {
+    padding-right: 8px;
+    background-image: linear-gradient(to bottom, rgba(242,242,242,.8), rgba(217,217,217,.7));
+    border-top: 1px solid rgba(255,255,255,.8); border-bottom: 1px solid #999999;
+}
+.bar.bottom { border-top: 1px solid white; border-bottom: 0; }
+.bar.left, .bar.right { padding-right: 0; background-image: linear-gradient(to right, rgba(242,242,242,.8), rgba(217,217,217,.7)); }
+.bar button, .menu button {
+    min-height: 20px; padding: 0 5px; border: 0; border-radius: 0;
+    background: transparent; box-shadow: none; color: #0d0d0d;
+}
+.bar button.brand, .bar button.application { font-weight: 600; }
+.bar button label, .menu button label { color: #0d0d0d; }
+.bar button:hover, .bar button:focus, .bar button.selected,
+.menu button:hover, .menu button:focus, .menu button.selected {
+    background-image: linear-gradient(to bottom, #6488f3, #2a5fed); color: white;
+}
+.bar button:hover label, .bar button:focus label, .bar button.selected label,
+.menu button:hover label, .menu button:focus label, .menu button.selected label { color: white; }
+.bar.left button, .bar.right button { min-width: 0; padding: 2px 0; }
+.menu { background: rgba(253,253,253,.95); border: 1px solid #666666; padding: 0; }
+.menu button { min-height: 22px; padding: 0 5px; }
+.menu .menu-title { font-weight: 600; color: #0d0d0d; padding: 3px 5px; }
+.menu .menu-info { color: #666666; padding: 2px 5px; }
+.menu button:disabled label { color: #999999; }
+.bar button.battery-low { background: #f6d378; }
+.bar button.battery-low label { color: #553c00; }
+.bar button.battery-critical { background: #b52b20; }
+.bar button.battery-critical label { color: white; }

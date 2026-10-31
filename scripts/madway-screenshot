@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Save and copy a PNG screenshot with grim; optionally select an area."""
+import argparse
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import runpy
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+api=runpy.run_path(str(Path(__file__).with_name('madway-shell')))
+
+
+def unlocked():
+    try:return not json.loads((api['runtime_directory']()/'desktop.json').read_text()).get('locked',True)
+    except (OSError,ValueError):return False
+
+
+def capture(region=False,clipboard=True):
+    if not unlocked():raise RuntimeError('Screenshots are unavailable while locked')
+    geometry=None
+    # Let explicit screenshot-menu actions unmap; shortcut captures keep menus.
+    time.sleep(.15)
+    if region:
+        selection=subprocess.run(['slurp'],capture_output=True,text=True)
+        if selection.returncode:return None
+        geometry=selection.stdout.strip()
+        if not geometry:return None
+    if not unlocked():raise RuntimeError('Screenshot cancelled because the session locked')
+    try:
+        picture_dir=subprocess.check_output(['xdg-user-dir','PICTURES'],text=True,timeout=2).strip()
+    except (OSError,subprocess.SubprocessError):picture_dir=''
+    directory=(Path(picture_dir) if picture_dir else Path.home()/'Pictures')/'Screenshots'
+    directory.mkdir(parents=True,exist_ok=True)
+    prefix=datetime.now().strftime('madway-%Y-%m-%d_%H-%M-%S-')
+    fd,name=tempfile.mkstemp(prefix=prefix,suffix='.png',dir=directory);os.close(fd)
+    path=Path(name)
+    try:
+        arguments=['grim']
+        if geometry:arguments+=['-g',geometry]
+        subprocess.run([*arguments,str(path)],check=True,timeout=15)
+        if not unlocked():raise RuntimeError('Screenshot cancelled because the session locked')
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    if clipboard:
+        try:
+            with path.open('rb') as png:subprocess.run(['wl-copy','--type','image/png'],stdin=png,check=True,timeout=5)
+        except (OSError,subprocess.SubprocessError) as error:
+            # A clipboard failure must not discard a successfully saved capture.
+            print('madway screenshot: saved '+str(path)+'; clipboard copy failed: '+str(error),file=sys.stderr)
+    return path
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--region',action='store_true')
+    parser.add_argument('--clipboard',dest='clipboard',action='store_true',default=True,help='Copy PNG (default)')
+    parser.add_argument('--no-clipboard',dest='clipboard',action='store_false',help='Save only')
+    args=parser.parse_args()
+    def cancelled(signum,frame):
+        raise RuntimeError('Screenshot cancelled')
+    signal.signal(signal.SIGTERM,cancelled)
+    signal.signal(signal.SIGINT,cancelled)
+    try:
+        path=capture(args.region,args.clipboard)
+        if path:
+            print(path,flush=True)
+            if api['settings']().getboolean('notifications','enabled'):
+                subprocess.run(['notify-send','--app-name=madway','Screenshot saved',str(path)],check=False,timeout=3)
+        return 0
+    except (OSError,RuntimeError,subprocess.SubprocessError) as error:
+        print('madway screenshot: '+str(error),file=sys.stderr)
+        return 1
+
+
+if __name__=='__main__':sys.exit(main())

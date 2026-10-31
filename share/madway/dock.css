@@ -1,0 +1,19 @@
+* { font-family: Inter, sans-serif; font-size: 11px; }
+window#waybar { background: transparent; color: #c8c8c8; }
+window#waybar > box { background: alpha(#080808,.94); border: 1px solid #555555; border-radius: 9px; padding: 3px; }
+#taskbar button { padding: 2px 4px; margin: 0 1px; border: 0; border-radius: 5px; background: transparent; box-shadow: none; color: #c8c8c8; }
+#taskbar button.active { background: #202020; border-bottom: 2px solid #b0b0b0; }
+#taskbar button.minimized { opacity: .65; border-bottom: 2px solid #909090; }
+#taskbar button:hover { background: #202020; }
+#custom-apps, #custom-terminal, #custom-files, #custom-settings {
+    min-width: 32px; min-height: 32px; margin: 1px; padding: 0 2px;
+    background-size: 28px 28px; background-repeat: no-repeat; background-position: center;
+}
+#custom-apps { background-image: -gtk-icontheme("view-app-grid-symbolic"); }
+#custom-terminal { background-image: -gtk-icontheme("utilities-terminal"); }
+#custom-files { background-image: -gtk-icontheme("system-file-manager"); }
+#custom-settings { background-image: -gtk-icontheme("preferences-system"); }
+#tray { padding: 0 5px; border-left: 1px solid #555555; }
+#tray menu { background: #080808; color: #c8c8c8; }
+#tray menu menuitem:hover { background: #202020; }
+tooltip { background: #080808; color: #c8c8c8; border: 1px solid #555555; }

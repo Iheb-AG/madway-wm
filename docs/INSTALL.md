@@ -86,7 +86,9 @@ to troubleshoot; use the nested launch command below for development.
 
 ## Controls in the native session
 
-- **Alt+Enter:** Kitty terminal.
+- **Alt+Enter:** Konsole terminal.
+- **Print / Shift+Print / Ctrl+Print:** screenshot / select area / copy screenshot.
+- **Application taskbar/dock entry:** minimize the focused window, otherwise focus/restore.
 - **Alt+D / Alt+Shift+D:** applications / commands.
 - **Alt+,** or madway → Settings: settings.
 - **Right-click empty desktop space:** desktop utility menu.
@@ -94,6 +96,7 @@ to troubleshoot; use the nested launch command below for development.
 - **Alt+right-drag:** resize floating windows or shared tile boundaries.
 - **Ctrl+Shift+arrows:** reorder tiles.
 - **Alt+Escape:** log out of madway.
+- **Alt+L:** lock the session using swaylock and your account password.
 - **Ctrl+Alt+F1–F12:** request another VT in a native hardware session.
 
 The modifier can be changed to Super under Input settings. The top bar has
@@ -101,7 +104,8 @@ workspace/window/status dropdowns and a shared utility menu; its height/status/c
 are under Panel. Screen edge supports top, bottom, left and right. It is hidden over fullscreen applications. Sounds and wallpaper
 images are opt-in. Your existing `~/.config/madway/settings.ini` is preserved.
 
-This preview has no lock screen, Xwayland, network manager, or full desktop
+Screen locking uses swaylock; install it with `--deps`. This preview has no
+Xwayland, network manager, or full desktop
 portal/polkit-agent setup. It supports native Wayland applications. The system
 power-off action shuts down the whole computer, following a confirmation in
 settings.
@@ -126,6 +130,32 @@ WLR_BACKENDS=wayland WLR_RENDERER=pixman ./scripts/madway-session
 
 Add `WLR_WL_OUTPUTS=2` to try two nested outputs. Nested mode keeps its own D-Bus
 session and does not reconfigure physical monitors.
+
+## Fullscreen playback stalls until pointer activity
+
+A failed display commit (for example DRM reporting `Device or resource busy`)
+used to return from rendering without retrying unless a desktop animation was
+active. A video client waiting for its next Wayland frame callback could then
+stall until pointer movement damaged the scene and woke rendering again.
+
+Madway now restores the failed frame's damage and retries independently on that
+output. The first retry follows its refresh period; consecutive failures back
+off up to 250 ms to avoid a busy loop. Successful commits reset the backoff.
+Normal idle outputs do not gain a continuous redraw loop. Sleeping, disabled
+and inactive outputs are not retried, and retries are removed with their output.
+Client frame callbacks and lock presentation barriers still require the normal
+successful rendering path.
+
+The native session log at `~/.local/state/madway/session.log` records failures
+and `Scene commits recovered` messages. This recovery does not repair permanent
+GPU/driver faults; if playback still freezes after reinstalling and starting a
+new session, retain the log around the freeze for diagnosis.
+
+`python3 tests/frame_recovery.py` uses a private fullscreen client paced solely
+by frame callbacks. It verifies recovery at 60/100 Hz with injected commit
+failures, restored damage, retry backoff and simulated sleep/resume, without
+mouse or keyboard input. It does not play media in the user's browser or test
+the native DRM driver.
 
 ## Removing the login choice
 

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Wofi accepts a terminal executable, so keep Konsole's session flags here.
+# A separate process prevents an existing Konsole on another desktop taking it.
+exec konsole --separate --platform wayland "$@"

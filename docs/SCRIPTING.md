@@ -15,7 +15,9 @@ startup command file is installed automatically.
 
 | Syntax | Behaviour |
 | --- | --- |
-| `exec kitty --title "Work terminal"` | Start a program with literal arguments |
+| `overlay toggle` / `overlay stop` | Start/stop the optional local scene |
+| `overlay SCENE_ID` | Select an entry from the installed local scene catalogue |
+| `exec konsole --separate --platform wayland` | Start a program with literal arguments |
 | `workspace 2` | Select workspace 1–9 |
 | `move 3` | Move the focused window to workspace 3 |
 | `window toggle-floating` | Toggle the focused window between floating and tiled |
@@ -40,7 +42,7 @@ Supported `set` keys:
 | Key | Values |
 | --- | --- |
 | `panel.position` | `top`, `bottom`, `left`, `right` |
-| `appearance.theme` | `black`, `amber`, `terminal`, `slate`, `paper` |
+| `appearance.theme` | `gershwin`, `gershwin-dark`, `black`, `amber`, `terminal`, `slate`, `paper` |
 | `appearance.title_height` | 12–24 |
 | `appearance.tile_gap` | 0–12 |
 | `windows.default_mode` | `floating`, `tiled` (new windows) |
@@ -57,7 +59,7 @@ Supported `set` keys:
 Settings commands update your personal settings file and apply live. Window
 commands act on the window focused when the compositor receives the command.
 Programs launch asynchronously; `exec` followed by a window command does not
-wait for that program to create a window. Use Kitty's own arguments or explicit
+wait for that program to create a window. Use the application's own arguments or explicit
 focus before window operations. A timed `wait` can assist simple workflows but
 is not a window-readiness guarantee. Runtime failures are reported in the
 terminal/helper log, and preceding commands are not rolled back.

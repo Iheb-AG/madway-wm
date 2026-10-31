@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Wayland desktop icons backed by the user's XDG Desktop folder."""
+import json
+import os
+from pathlib import Path
+import runpy
+import signal
+import shutil
+import subprocess
+import threading
+import gi
+gi.require_version('Gtk','3.0')
+gi.require_version('GtkLayerShell','0.1')
+from gi.repository import Gtk,Gdk,Gio,GLib,GtkLayerShell as Layer
+
+api=runpy.run_path(str(Path(__file__).with_name('madway-shell')))
+files=runpy.run_path(str(Path(__file__).with_name('madway_files.py')))
+TARGETS=[Gtk.TargetEntry.new('text/uri-list',0,0)]
+
+
+class Desktop:
+    def __init__(self):
+        self.config=api['settings']();self.directory=files['desktop_directory'](self.config)
+        size=min(64,max(24,self.config.getint('desktop','icon_size')))
+        self.icon_enum=Gtk.icon_size_register('madway-desktop-size',size,size)
+        self.display=Gdk.Display.get_default();self.windows=[];self.timer=0;self.busy=False;self.alive=True
+        self.model=Gtk.ListStore(Gio.Icon,str,str,bool)
+        self.order_path=api['CONFIG'].parent/'desktop-order.json'
+        try:self.order=json.loads(self.order_path.read_text())
+        except (OSError,ValueError):self.order=[]
+        if not isinstance(self.order,list):self.order=[]
+        self.provider=Gtk.CssProvider();self.provider.load_from_data(self.style().encode())
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(),self.provider,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.display.connect('monitor-added',lambda *args:self.rebuild())
+        self.display.connect('monitor-removed',lambda *args:self.rebuild())
+        self.watches=[];self.watch();self.rebuild();self.refresh()
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT,signal.SIGTERM,self.close)
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT,signal.SIGINT,self.close)
+
+    def style(self):
+        palette=api['themes']()[self.config.get('appearance','theme')]
+        controls=(api['SHARE']/'settings.css').read_text()
+        for key,value in palette.items():controls=controls.replace('@'+key+'@',value)
+        return api['theme_style']('window { background: #080808; color: #c8c8c8; }',self.config)+controls+'''
+        window.desktop-icons, window.desktop-icons decoration, .desktop-icons scrolledwindow, .desktop-icons viewport, .desktop-icons iconview { background: transparent; border: 0; box-shadow: none; }
+        .desktop-icons iconview { color: white; font-size: 12px; text-shadow: 0 1px 2px black, 1px 0 2px black; }
+        .desktop-icons iconview:selected { background: '''+palette['active']+'''; border-radius: 1px; }
+        menu { background: '''+palette['surface']+'''; color: '''+palette['text']+'''; border: 1px solid '''+palette['border']+'''; padding: 2px; border-radius: 0; box-shadow: none; }
+        menuitem { padding: 3px 10px; border-radius: 0; }
+        menuitem:hover { background: '''+palette['active']+'''; }
+        '''
+
+    def watch(self):
+        for watch in self.watches:watch.cancel()
+        self.watches=[]
+        for path in dict.fromkeys([self.directory,self.directory.parent]):
+            if not path.is_dir():continue
+            try:
+                watch=Gio.File.new_for_path(str(path)).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES,None)
+                def changed(watch,file,other,event,path=path):
+                    if path==self.directory or file.get_path()==str(self.directory) or (other and other.get_path()==str(self.directory)):self.schedule()
+                watch.connect('changed',changed);self.watches.append(watch)
+            except GLib.Error:pass
+
+    def schedule(self):
+        if self.timer:GLib.source_remove(self.timer)
+        self.timer=GLib.timeout_add(150,self.refresh)
+
+    def refresh(self):
+        self.timer=0
+        if not self.alive:return False
+        try:
+            rows=[]
+            if self.directory.is_dir():
+                enumerator=Gio.File.new_for_path(str(self.directory)).enumerate_children('standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden',Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,None)
+                while True:
+                    info=enumerator.next_file(None)
+                    if info is None:break
+                    if not info.get_is_hidden():rows.append((info.get_icon(),info.get_display_name(),str(self.directory/info.get_name()),info.get_file_type()==Gio.FileType.DIRECTORY))
+                enumerator.close(None)
+            order={name:i for i,name in enumerate(self.order) if isinstance(name,str)}
+            rows.sort(key=lambda row:(order.get(Path(row[2]).name,len(order)),not row[3],row[1].casefold()))
+            selected={row['view']:self.selected(row['view']) for row in self.windows}
+            self.model.clear()
+            for row in rows:self.model.append(row)
+            for entry in self.windows:
+                for index,row in enumerate(self.model):
+                    if Path(row[2]) in selected[entry['view']]:entry['view'].select_path(Gtk.TreePath.new_from_indices([index]))
+            self.watch()
+        except (OSError,GLib.Error) as error:self.error(str(error))
+        return False
+
+    def rebuild(self):
+        for entry in self.windows:entry['window'].destroy()
+        self.windows=[]
+        primary=self.display.get_primary_monitor() or self.display.get_monitor(0)
+        for index in range(self.display.get_n_monitors()):
+            monitor=self.display.get_monitor(index);window=Gtk.Window()
+            window.set_decorated(False);window.set_visual(window.get_screen().get_rgba_visual())
+            window.get_style_context().add_class('desktop-icons')
+            Layer.init_for_window(window);Layer.set_namespace(window,'madway-desktop')
+            Layer.set_monitor(window,monitor);Layer.set_layer(window,Layer.Layer.BOTTOM)
+            Layer.set_keyboard_mode(window,Layer.KeyboardMode.ON_DEMAND);Layer.set_exclusive_zone(window,0)
+            for edge in [Layer.Edge.TOP,Layer.Edge.BOTTOM,Layer.Edge.LEFT,Layer.Edge.RIGHT]:Layer.set_anchor(window,edge,True)
+            view=Gtk.IconView.new();view.set_model(self.model if monitor==primary else Gtk.ListStore(Gio.Icon,str,str,bool))
+            view.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+            renderer=Gtk.CellRendererPixbuf();renderer.set_property('stock-size',self.icon_enum)
+            size=self.config.getint('desktop','icon_size');renderer.set_fixed_size(size,size)
+            view.pack_start(renderer,False);view.add_attribute(renderer,'gicon',0)
+            view.set_text_column(1)
+            view.set_tooltip_column(2)
+            view.set_item_width(92);view.set_column_spacing(8);view.set_row_spacing(8);view.set_margin(12)
+            view.set_item_padding(4);view.set_activate_on_single_click(False)
+            view.connect('item-activated',lambda widget,path:self.open([Path(widget.get_model()[path][2])]))
+            view.connect('button-press-event',self.pressed);view.connect('key-press-event',self.key)
+            view.enable_model_drag_source(Gdk.ModifierType.BUTTON1_MASK,TARGETS,Gdk.DragAction.COPY|Gdk.DragAction.MOVE)
+            view.drag_dest_set(Gtk.DestDefaults.ALL,TARGETS,Gdk.DragAction.COPY|Gdk.DragAction.MOVE)
+            view.connect('drag-data-get',self.drag_get);view.connect('drag-data-received',self.drag_received)
+            view.connect('drag-motion',self.drag_motion)
+            scroll=Gtk.ScrolledWindow();scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
+            scroll.add(view);window.add(scroll)
+            self.windows.append(dict(window=window,view=view,monitor=monitor));window.show_all()
+
+    def selected(self,view):return [Path(view.get_model()[path][2]) for path in view.get_selected_items()]
+
+    def error(self,message):
+        if not self.alive:return False
+        parent=self.windows[0]['window'] if self.windows else None
+        dialog=Gtk.MessageDialog(transient_for=parent,modal=True,message_type=Gtk.MessageType.ERROR,buttons=Gtk.ButtonsType.CLOSE,text='Desktop action could not be completed')
+        dialog.set_decorated(False)
+        dialog.get_style_context().add_class('settings-window');dialog.format_secondary_text(message)
+        dialog.connect('response',lambda widget,*args:widget.destroy());dialog.show_all();return False
+
+    def run(self,operation,done=None):
+        if self.busy:self.error('A file operation is already running');return False
+        self.busy=True
+        def worker():
+            error=None
+            try:operation()
+            except (OSError,GLib.Error,ValueError,shutil.Error) as failure:error=str(failure)
+            def complete():
+                self.busy=False
+                if self.alive:
+                    self.refresh()
+                    if error:self.error(error)
+                    if done:done(error is None)
+                return False
+            GLib.idle_add(complete)
+        threading.Thread(target=worker,daemon=True).start();return True
+
+    def open(self,paths):
+        for path in paths:
+            try:Gio.AppInfo.launch_default_for_uri(path.as_uri(),None)
+            except GLib.Error as error:self.error(str(error))
+
+    def name_dialog(self,title,default,operation):
+        dialog=Gtk.Dialog(title=title,transient_for=self.windows[0]['window'],modal=True)
+        dialog.set_decorated(False)
+        dialog.get_style_context().add_class('settings-window');dialog.add_buttons('Cancel',Gtk.ResponseType.CANCEL,'OK',Gtk.ResponseType.OK)
+        entry=Gtk.Entry(text=default);entry.set_activates_default(True)
+        dialog.get_content_area().set_border_width(10);dialog.get_content_area().add(entry)
+        dialog.set_default_response(Gtk.ResponseType.OK);dialog.show_all();entry.grab_focus();entry.select_region(0,-1)
+        def response(widget,result):
+            name=entry.get_text()
+            if result==Gtk.ResponseType.OK:self.run(lambda:operation(name))
+            widget.destroy()
+        dialog.connect('response',response)
+
+    def copy(self,paths):
+        if not paths:return
+        try:subprocess.run(['wl-copy','--type','text/uri-list'],input=('\r\n'.join(p.as_uri() for p in paths)+'\r\n').encode(),check=True,timeout=5)
+        except (OSError,subprocess.SubprocessError) as error:self.error(str(error))
+
+    def paste(self):
+        clipboard=Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.request_uris(lambda clip,uris,*args:self.run(lambda:files['transfer'](uris,self.directory)) if uris else None)
+
+    def menu(self,view,event,paths):
+        menu=Gtk.Menu()
+        menu.set_reserve_toggle_size(False)
+        def item(label,callback):
+            button=Gtk.MenuItem(label=label);button.connect('activate',lambda *args:callback());menu.append(button)
+        if paths:
+            item('Open',lambda:self.open(paths));item('Copy',lambda:self.copy(paths))
+            if len(paths)==1:item('Rename…',lambda:self.name_dialog('Rename',paths[0].name,lambda name:files['rename'](paths[0],name)))
+            item('Move to Trash',lambda:self.run(lambda:files['trash'](paths)))
+            menu.append(Gtk.SeparatorMenuItem())
+        item('New folder…',lambda:self.name_dialog('New folder','New folder',lambda name:files['create'](self.directory,name,True)))
+        item('New text file…',lambda:self.name_dialog('New text file','Untitled.txt',lambda name:files['create'](self.directory,name)))
+        item('Paste files',self.paste);item('Open Desktop folder',lambda:self.open([self.directory]))
+        item('Refresh',self.refresh)
+        menu.append(Gtk.SeparatorMenuItem())
+        item('Applications…',lambda:api['action']('launcher'))
+        item('Run command…',lambda:api['action']('run'))
+        item('Desktop settings…',lambda:api['action']('settings-page',page='Desktop'))
+        if not paths:
+            item('Hide desktop icons',lambda:api['action']('toggle-desktop-icons'))
+            menu.get_children()[-1].set_sensitive(not self.busy)
+        menu.show_all();menu.popup_at_pointer(event)
+
+    def pressed(self,view,event):
+        if event.button!=3:return False
+        path=view.get_path_at_pos(int(event.x),int(event.y))
+        if path is None:view.unselect_all()
+        elif not view.path_is_selected(path):view.unselect_all();view.select_path(path)
+        self.menu(view,event,self.selected(view));return True
+
+    def key(self,view,event):
+        paths=self.selected(view);ctrl=event.state&Gdk.ModifierType.CONTROL_MASK
+        if event.keyval==Gdk.KEY_Delete and paths:self.run(lambda:files['trash'](paths));return True
+        if event.keyval==Gdk.KEY_F2 and len(paths)==1:self.name_dialog('Rename',paths[0].name,lambda name:files['rename'](paths[0],name));return True
+        if ctrl and event.keyval in (Gdk.KEY_c,Gdk.KEY_C):self.copy(paths);return True
+        if ctrl and event.keyval in (Gdk.KEY_v,Gdk.KEY_V):self.paste();return True
+        if event.keyval==Gdk.KEY_F5:self.refresh();return True
+        return False
+
+    def drag_get(self,view,context,selection,info,time):selection.set_uris([p.as_uri() for p in self.selected(view)])
+
+    def drag_motion(self,view,context,x,y,time):
+        own=Gtk.drag_get_source_widget(context)
+        action=Gdk.DragAction.COPY if context.get_actions()&Gdk.DragAction.COPY else Gdk.DragAction.MOVE
+        if own is not None and not (Gtk.get_current_event_state()[1]&Gdk.ModifierType.CONTROL_MASK):action=Gdk.DragAction.MOVE
+        Gdk.drag_status(context,action,time);return True
+
+    def drag_received(self,view,context,x,y,selection,info,time):
+        uris=selection.get_uris()
+        target=self.directory;path=view.get_path_at_pos(x,y)
+        if path is not None:
+            candidate=Path(view.get_model()[path][2])
+            if candidate.is_dir():target=candidate
+        own=Gtk.drag_get_source_widget(context)
+        try:
+            sources=files['local_paths'](uris or [])
+            move=context.get_selected_action()==Gdk.DragAction.MOVE
+            if own is not None and move and target==self.directory and all(p.parent==self.directory for p in sources):
+                names=[Path(row[2]).name for row in self.model];selected=[p.name for p in sources]
+                rest=[name for name in names if name not in selected]
+                index=min(path.get_indices()[0],len(rest)) if path is not None else len(rest)
+                self.order=rest[:index]+selected+rest[index:];self.order_path.parent.mkdir(parents=True,exist_ok=True)
+                temporary=self.order_path.with_suffix('.tmp');temporary.write_text(json.dumps(self.order));temporary.replace(self.order_path)
+                self.refresh();Gtk.drag_finish(context,True,False,time);return
+            accepted=self.run(lambda:files['transfer'](uris,target,move),lambda success:Gtk.drag_finish(context,success,False,time))
+            if not accepted:Gtk.drag_finish(context,False,False,time)
+        except (OSError,ValueError,GLib.Error) as error:self.error(str(error));Gtk.drag_finish(context,False,False,time)
+
+    def close(self):
+        self.alive=False
+        if self.timer:GLib.source_remove(self.timer);self.timer=0
+        for watch in self.watches:watch.cancel()
+        for entry in self.windows:entry['window'].destroy()
+        Gtk.main_quit();return False
+
+
+if __name__=='__main__':
+    GLib.set_prgname('org.madway.Desktop');desktop=Desktop();Gtk.main()

@@ -6,7 +6,12 @@
 #include "workspace.h"
 #include "layer.h"
 #include "session.h"
+#include "lock.h"
+#include "taskbar.h"
+#include "preview.h"
+#include "motion.h"
 #include <string.h>
+#include <glib.h>
 
 #include <stdlib.h>
 #include <wlr/types/wlr_keyboard.h>
@@ -15,6 +20,12 @@
 
 void madway_focus_view(struct madway_server *server, struct madway_view *view)
 {
+    if(server->locked){if(view==NULL)server->focused_view=NULL;madway_lock_focus(server,NULL);return;}
+    madway_motion_focus(server,view);
+    if (view != NULL && view->mapped && view->minimized && view->workspace == server->active_workspace) {
+        madway_set_minimized(view,false);
+        return;
+    }
     if (server->seat == NULL || (view != NULL && !madway_view_visible(view)))
     {
         return;
@@ -55,8 +66,7 @@ void madway_focus_view(struct madway_server *server, struct madway_view *view)
     struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
     if (keyboard != NULL)
     {
-        wlr_seat_keyboard_notify_enter(server->seat, view->toplevel->base->surface,
-                keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+        madway_keyboard_enter(server,view->toplevel->base->surface);
     }
 }
 
@@ -91,7 +101,7 @@ static void handle_view_commit(struct wl_listener *listener, void *data)
         if (view->toplevel->requested.fullscreen) madway_set_fullscreen(view, true);
         else if (view->toplevel->requested.maximized) madway_set_maximized(view, true);
     }
-    if (view->decoration != NULL && !view->compact_frame)
+    if (view->decoration != NULL && !view->compact_frame && !view->desktop_overlay)
     {
         bool previous_mode = view->decorated;
         view->decorated = view->decoration->current.mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
@@ -111,6 +121,7 @@ static void handle_view_commit(struct wl_listener *listener, void *data)
             view->resize_anchor_pending = false;
     }
     madway_frame_update(view);
+    madway_motion_commit(view);
 }
 
 static void handle_view_map(struct wl_listener *listener, void *data)
@@ -132,13 +143,27 @@ static void handle_view_map(struct wl_listener *listener, void *data)
     if (!view->maximized && !view->fullscreen)
         wlr_scene_node_set_position(&view->scene_tree->node, x, y);
     view->mapped = true;
+    view->minimized = false;
     if (view->toplevel->parent != NULL ||
-        (view->toplevel->app_id != NULL && !strcmp(view->toplevel->app_id, "org.madway.Settings")))
+        (view->toplevel->app_id != NULL && (!strcmp(view->toplevel->app_id, "org.madway.Settings") || !strcmp(view->toplevel->app_id,"org.madway.Desktop"))))
         view->floating = true;
-    if (view->toplevel->app_id != NULL && !strcmp(view->toplevel->app_id, "org.madway.Settings"))
+    if (view->toplevel->app_id != NULL && (!strcmp(view->toplevel->app_id, "org.madway.Settings") || !strcmp(view->toplevel->app_id,"org.madway.Desktop")))
     {
         view->compact_frame = true;
         view->decorated = true;
+    }
+    // raylib 5.0 does not expose GLFW's Wayland app_id hint. Its dedicated
+    // overlay title identifies this optional client before the first map.
+    if (g_strcmp0(view->toplevel->title, "madway demoscene") == 0) {
+        view->desktop_overlay = true;
+        view->floating = true;view->decorated = false;view->keep_above = true;
+        wlr_scene_node_reparent(&view->scene_tree->node, view->server->above_windows);
+        if (view->output != NULL) {
+            struct wlr_box area = view->output->usable_area;
+            x = area.x + (area.width-view->toplevel->base->geometry.width)/2;
+            y = area.y + (area.height-view->toplevel->base->geometry.height)/2;
+            wlr_scene_node_set_position(&view->scene_tree->node, x, y);
+        }
     }
     view->floating_geometry = (struct wlr_box){.x = x, .y = y,
         .width = view->toplevel->base->geometry.width, .height = view->toplevel->base->geometry.height};
@@ -159,7 +184,7 @@ static void handle_view_map(struct wl_listener *listener, void *data)
             }
     }
     madway_workspace_arrange(view->server);
-    if (madway_view_visible(view)) madway_focus_view(view->server, view);
+    if (madway_view_visible(view) && !view->desktop_overlay) madway_focus_view(view->server, view);
     madway_rebase_cursor(view->server);
     wlr_log(WLR_INFO, "Window mapped: %s", view->toplevel->title != NULL
             ? view->toplevel->title : "(untitled)");
@@ -169,7 +194,10 @@ static void handle_view_unmap(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, unmap);
+    madway_motion_finish(view->server);
     view->mapped = false;
+    madway_preview_remove(view);
+    madway_taskbar_remove(view);
     if (view->server->interactive_view == view || view->server->interactive_neighbor_id == view->id)
         madway_end_interactive(view->server);
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);
@@ -182,7 +210,10 @@ static void handle_view_destroy(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, destroy);
+    madway_motion_finish(view->server);
     view->mapped = false;
+    madway_preview_remove(view);
+    madway_taskbar_remove(view);
     if (view->server->interactive_view == view || view->server->interactive_neighbor_id == view->id)
         madway_end_interactive(view->server);
     wlr_scene_node_set_enabled(&view->scene_tree->node, false);
@@ -192,10 +223,12 @@ static void handle_view_destroy(struct wl_listener *listener, void *data)
     wl_list_remove(&view->unmap.link);
     wl_list_remove(&view->destroy.link);
     wl_list_remove(&view->request_maximize.link);
+    wl_list_remove(&view->request_minimize.link);
     wl_list_remove(&view->request_fullscreen.link);
     wl_list_remove(&view->request_move.link);
     wl_list_remove(&view->request_resize.link);
     wl_list_remove(&view->set_title.link);
+    wl_list_remove(&view->set_app_id.link);
     wl_list_remove(&view->link);
     wl_list_remove(&view->layout_link);
     view->toplevel->base->data = NULL;
@@ -203,6 +236,13 @@ static void handle_view_destroy(struct wl_listener *listener, void *data)
     free(view->frame_title);
     free(view);
     wlr_log(WLR_INFO, "Window destroyed");
+}
+
+static void handle_view_request_minimize(struct wl_listener *listener, void *data)
+{
+    (void)data;
+    struct madway_view *view = wl_container_of(listener, view, request_minimize);
+    madway_set_minimized(view, true);
 }
 
 static void handle_view_request_maximize(struct wl_listener *listener, void *data)
@@ -265,6 +305,13 @@ static void handle_view_title(struct wl_listener *listener, void *data)
     madway_frame_update(view);
 }
 
+static void handle_view_app_id(struct wl_listener *listener, void *data)
+{
+    (void)data;
+    struct madway_view *view = wl_container_of(listener, view, set_app_id);
+    madway_session_publish_state(view->server);
+}
+
 static void handle_new_toplevel(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, new_toplevel);
@@ -310,6 +357,8 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data)
     wl_signal_add(&toplevel->events.destroy, &view->destroy);
     view->request_maximize.notify = handle_view_request_maximize;
     wl_signal_add(&toplevel->events.request_maximize, &view->request_maximize);
+    view->request_minimize.notify = handle_view_request_minimize;
+    wl_signal_add(&toplevel->events.request_minimize, &view->request_minimize);
     view->request_fullscreen.notify = handle_view_request_fullscreen;
     wl_signal_add(&toplevel->events.request_fullscreen, &view->request_fullscreen);
     view->request_move.notify = handle_view_request_move;
@@ -318,6 +367,8 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data)
     wl_signal_add(&toplevel->events.request_resize, &view->request_resize);
     view->set_title.notify = handle_view_title;
     wl_signal_add(&toplevel->events.set_title, &view->set_title);
+    view->set_app_id.notify = handle_view_app_id;
+    wl_signal_add(&toplevel->events.set_app_id, &view->set_app_id);
     wlr_log(WLR_INFO, "Application requested a new window");
 }
 
@@ -386,7 +437,9 @@ struct madway_popup
     struct madway_server *server;
     struct wlr_xdg_popup *popup;
     struct wlr_scene_tree *scene_tree;
-    struct wl_listener commit, destroy, scene_destroy;
+    struct wlr_scene_tree *overlay_anchor;
+    struct wl_listener commit, destroy, scene_destroy,parent_destroy;
+    bool parent_linked;
 };
 
 static void handle_popup_commit(struct wl_listener *listener, void *data)
@@ -395,11 +448,14 @@ static void handle_popup_commit(struct wl_listener *listener, void *data)
     struct madway_popup *popup = wl_container_of(listener, popup, commit);
     if (popup->popup->base->initial_commit)
     {
+        struct wlr_surface *root_surface=popup->popup->parent;
         struct wlr_xdg_surface *root = popup->popup->parent != NULL
             ? wlr_xdg_surface_try_from_wlr_surface(popup->popup->parent) : NULL;
-        while (root != NULL && root->role == WLR_XDG_SURFACE_ROLE_POPUP)
+        while (root != NULL && root->role == WLR_XDG_SURFACE_ROLE_POPUP) {
+            root_surface=root->popup->parent;
             root = root->popup->parent != NULL
                 ? wlr_xdg_surface_try_from_wlr_surface(root->popup->parent) : NULL;
+        }
         struct madway_view *view = root != NULL && root->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL
             ? find_view(popup->server, root->toplevel) : NULL;
         if (view != NULL && root->data != NULL)
@@ -412,6 +468,18 @@ static void handle_popup_commit(struct wl_listener *listener, void *data)
             bounds.x -= x;
             bounds.y -= y;
             wlr_xdg_popup_unconstrain_from_box(popup->popup, &bounds);
+        }
+        else {
+            struct madway_layer *layer;
+            wl_list_for_each(layer,&popup->server->layers,link) {
+                if (layer->surface->surface!=root_surface) continue;
+                struct wlr_box bounds;
+                wlr_output_layout_get_box(popup->server->output_layout,layer->surface->output,&bounds);
+                int x,y;wlr_scene_node_coords(&layer->scene_layer->tree->node,&x,&y);
+                bounds.x-=x;bounds.y-=y;
+                wlr_xdg_popup_unconstrain_from_box(popup->popup,&bounds);
+                break;
+            }
         }
         wlr_xdg_surface_schedule_configure(popup->popup->base);
     }
@@ -426,6 +494,15 @@ static void handle_popup_scene_destroy(struct wl_listener *listener, void *data)
     popup->scene_tree = NULL;
 }
 
+static void handle_popup_parent_destroy(struct wl_listener *listener,void *data)
+{
+    (void)data;
+    struct madway_popup *popup=wl_container_of(listener,popup,parent_destroy);
+    wl_list_remove(&popup->parent_destroy.link);popup->parent_linked=false;
+    struct wlr_scene_tree *anchor=popup->overlay_anchor;popup->overlay_anchor=NULL;
+    if (anchor) wlr_scene_node_destroy(&anchor->node);
+}
+
 static void handle_popup_destroy(struct wl_listener *listener, void *data)
 {
     (void)data;
@@ -433,11 +510,13 @@ static void handle_popup_destroy(struct wl_listener *listener, void *data)
     wl_list_remove(&popup->commit.link);
     wl_list_remove(&popup->destroy.link);
     popup->popup->base->data = NULL;
+    if (popup->parent_linked) wl_list_remove(&popup->parent_destroy.link);
     if (popup->scene_tree != NULL)
     {
         wl_list_remove(&popup->scene_destroy.link);
         wlr_scene_node_destroy(&popup->scene_tree->node);
     }
+    if (popup->overlay_anchor) wlr_scene_node_destroy(&popup->overlay_anchor->node);
     free(popup);
 }
 
@@ -448,9 +527,26 @@ void madway_add_popup_scene(struct madway_server *server, struct wlr_xdg_popup *
     if (popup == NULL) { wl_client_post_no_memory(xdg_popup->base->client->client); return; }
     popup->popup = xdg_popup;
     popup->server = server;
-    popup->scene_tree = wlr_scene_xdg_surface_create(parent, xdg_popup->base);
+    struct wlr_scene_tree *container=parent;
+    struct madway_layer *layer;
+    wl_list_for_each(layer,&server->layers,link) {
+        if (layer->surface->surface!=xdg_popup->parent || strcmp(layer->surface->namespace,"madway-desktop")) continue;
+        // Desktop file menus belong above application windows, while the icon
+        // surface itself stays below them. Destroy this anchor with its parent.
+        popup->overlay_anchor=wlr_scene_tree_create(server->layer_trees[3]);
+        if (!popup->overlay_anchor) {free(popup);wl_client_post_no_memory(xdg_popup->base->client->client);return;}
+        int x,y;wlr_scene_node_coords(&parent->node,&x,&y);
+        wlr_scene_node_set_position(&popup->overlay_anchor->node,x,y);
+        popup->overlay_anchor->node.data=layer;container=popup->overlay_anchor;
+        popup->parent_destroy.notify=handle_popup_parent_destroy;
+        wl_signal_add(&parent->node.events.destroy,&popup->parent_destroy);popup->parent_linked=true;
+        break;
+    }
+    popup->scene_tree = wlr_scene_xdg_surface_create(container, xdg_popup->base);
     if (popup->scene_tree == NULL)
     {
+        if (popup->parent_linked) wl_list_remove(&popup->parent_destroy.link);
+        if (popup->overlay_anchor) wlr_scene_node_destroy(&popup->overlay_anchor->node);
         free(popup);
         wl_client_post_no_memory(xdg_popup->base->client->client);
         return;
@@ -469,6 +565,7 @@ static void handle_new_popup(struct wl_listener *listener, void *data)
 {
     struct madway_server *server = wl_container_of(listener, server, new_popup);
     struct wlr_xdg_popup *popup = data;
+    if(server->locked){wlr_xdg_popup_destroy(popup);return;}
     // Layer-shell popups are associated with their layer parent by a later request.
     if (popup->parent == NULL) return;
     struct wlr_xdg_surface *parent = wlr_xdg_surface_try_from_wlr_surface(popup->parent);

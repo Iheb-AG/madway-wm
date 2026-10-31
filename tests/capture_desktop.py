@@ -19,7 +19,7 @@ target=repo/'docs/screenshots';target.mkdir(parents=True,exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='madway-capture-') as tmp:
     root=Path(tmp);runtime=root/'runtime';runtime.mkdir(mode=0o700)
     config=root/'config';(config/'madway').mkdir(parents=True)
-    (config/'madway/settings.ini').write_text('[sounds]\nenabled=false\n[panel]\nmetrics=false\n[output:HEADLESS-1]\nmode=1600x1000@60000\n')
+    (config/'madway/settings.ini').write_text('[sounds]\nenabled=false\n[desktop]\nicons=false\n[power]\nshow_battery=false\n[panel]\nmetrics=false\n[output:HEADLESS-1]\nmode=1600x1000@60000\n')
     profile=root/'firefox';profile.mkdir()
     (profile/'user.js').write_text('user_pref("browser.shell.checkDefaultBrowser",false);\nuser_pref("browser.aboutwelcome.enabled",false);\nuser_pref("browser.startup.homepage_override.mstone","ignore");\nuser_pref("datareporting.policy.dataSubmissionEnabled",false);\nuser_pref("toolkit.telemetry.enabled",false);\n')
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wlroots-0.20','wayland-server','xkbcommon'],text=True).split()

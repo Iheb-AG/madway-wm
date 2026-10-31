@@ -1,4 +1,7 @@
 #include "session.h"
+#include "taskbar.h"
+#include "preview.h"
+#include "layer.h"
 #include "main.h"
 #include "view.h"
 #include "decoration.h"
@@ -7,7 +10,10 @@
 #include "monitors.h"
 #include "window.h"
 #include "theme.h"
+#include "power.h"
+#include "lock.h"
 #include <glib/gstdio.h>
+#include <math.h>
 
 #include <errno.h>
 #include <glib.h>
@@ -60,9 +66,9 @@ bool madway_spawn(struct madway_server *server, char *const arguments[], pid_t *
     return status == 0;
 }
 
-void madway_launch_kitty(struct madway_server *server)
+void madway_launch_terminal(struct madway_server *server)
 {
-    char *arguments[] = {"kitty", "-o", "linux_display_server=wayland", NULL};
+    char *arguments[] = {"konsole", "--separate", "--platform", "wayland", NULL};
     madway_spawn(server, arguments, NULL);
 }
 
@@ -72,9 +78,42 @@ void madway_session_reload(struct madway_server *server)
     GKeyFile *file = g_key_file_new();
     char *path = g_build_filename(g_get_user_config_dir(), "madway", "settings.ini", NULL);
     server->config = (struct madway_config){.title_height = 14, .tile_gap = 1,
-        .master_percent = 50, .repeat_rate = 25, .repeat_delay = 600, .default_floating = true};
+        .master_percent = 50, .repeat_rate = 25, .repeat_delay = 600, .default_floating = true,
+        .dock_autohide=true,.dock_animate=true,.dock_animation_ms=240,
+        .tap=true,.tap_drag=true,.dwt=true,.accel_profile="default",.click_method="default",
+        .workspace_animate=true,.workspace_animation_ms=420,.window_animate=true,.window_animation_ms=360};
     if (g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
     {
+        struct {const char *section,*key;bool *value;} options[]={
+            {"touchpad","tap",&server->config.tap},{"touchpad","tap_drag",&server->config.tap_drag},
+            {"touchpad","drag_lock",&server->config.drag_lock},{"touchpad","disable_while_typing",&server->config.dwt},
+            {"touchpad","natural_scroll",&server->config.touchpad_natural},{"mouse","natural_scroll",&server->config.mouse_natural},
+            {"mouse","left_handed",&server->config.left_handed},{"mouse","middle_emulation",&server->config.middle_emulation},
+            {"workspaces","animate",&server->config.workspace_animate},{"windows","animate",&server->config.window_animate}};
+        for (size_t i=0;i<G_N_ELEMENTS(options);++i)
+            if (g_key_file_has_key(file,options[i].section,options[i].key,NULL))
+                *options[i].value=g_key_file_get_boolean(file,options[i].section,options[i].key,NULL);
+        const char *sections[]={"mouse","touchpad"};double *speeds[]={&server->config.mouse_speed,&server->config.touchpad_speed};
+        for (size_t i=0;i<2;++i) {
+            double value=g_key_file_get_double(file,sections[i],"speed",NULL);
+            *speeds[i]=isfinite(value)?CLAMP(value,-1,1):0;
+        }
+        struct {const char *section,*key;char *value;size_t size;} strings[]={
+            {"mouse","accel_profile",server->config.accel_profile,sizeof(server->config.accel_profile)},
+            {"touchpad","click_method",server->config.click_method,sizeof(server->config.click_method)},
+            {"keyboard","layout",server->config.keyboard_layout,sizeof(server->config.keyboard_layout)},
+            {"keyboard","variant",server->config.keyboard_variant,sizeof(server->config.keyboard_variant)},
+            {"keyboard","options",server->config.keyboard_options,sizeof(server->config.keyboard_options)}};
+        for (size_t i=0;i<G_N_ELEMENTS(strings);++i) {
+            char *value=g_key_file_get_string(file,strings[i].section,strings[i].key,NULL);
+            if (value) g_strlcpy(strings[i].value,value,strings[i].size);
+            g_free(value);
+        }
+        if (g_key_file_has_key(file,"workspaces","animation_ms",NULL)) server->config.workspace_animation_ms=CLAMP(g_key_file_get_integer(file,"workspaces","animation_ms",NULL),80,500);
+        if (g_key_file_has_key(file,"windows","animation_ms",NULL)) server->config.window_animation_ms=CLAMP(g_key_file_get_integer(file,"windows","animation_ms",NULL),80,500);
+        if (g_key_file_has_key(file,"dock","autohide",NULL)) server->config.dock_autohide=g_key_file_get_boolean(file,"dock","autohide",NULL);
+        if (g_key_file_has_key(file,"dock","animate",NULL)) server->config.dock_animate=g_key_file_get_boolean(file,"dock","animate",NULL);
+        if (g_key_file_has_key(file,"dock","animation_ms",NULL)) server->config.dock_animation_ms=CLAMP(g_key_file_get_integer(file,"dock","animation_ms",NULL),80,500);
         if (g_key_file_has_key(file, "appearance", "title_height", NULL))
             server->config.title_height = CLAMP(g_key_file_get_integer(file, "appearance", "title_height", NULL), 12, 24);
         if (g_key_file_has_key(file, "appearance", "tile_gap", NULL))
@@ -96,7 +135,16 @@ void madway_session_reload(struct madway_server *server)
         server->config.use_super = g_strcmp0(modifier, "super") == 0;
         g_free(modifier);
     }
+    // Upgrade only the old shipped defaults; retain custom durations and flags.
+    if (g_key_file_get_integer(file,"motion","version",NULL)<2) {
+        if (server->config.workspace_animation_ms==220) server->config.workspace_animation_ms=420;
+        if (server->config.window_animation_ms==180) server->config.window_animation_ms=360;
+        if (server->config.dock_animation_ms==180) server->config.dock_animation_ms=240;
+    }
     char *theme = g_key_file_get_string(file, "appearance", "theme", NULL);
+    char *lid = g_key_file_get_string(file,"power","lid_action",NULL);
+    server->config.lid_auto = lid != NULL && strcmp(lid,"auto")==0;
+    g_free(lid);
     madway_theme_load(&server->config, theme);
     g_free(theme);
     g_key_file_unref(file);
@@ -195,6 +243,18 @@ static int handle_control(int fd, uint32_t mask, void *data)
     while ((length = recv(fd, command, sizeof(command) - 1, 0)) > 0)
     {
         command[length] = '\0';
+        int lock_pid;
+        unsigned lock_serial;
+        if(sscanf(command,"lock-request %u",&lock_serial)==1){madway_lock_request(server,lock_serial);continue;}
+        if(strcmp(command,"lock-blank")==0){madway_lock_blank(server);continue;}
+        if(sscanf(command,"lock-owner %d",&lock_pid)==1){madway_lock_authorize(server,lock_pid);continue;}
+        if (strcmp(command,"prepare-sleep")==0) {madway_power_prepare_sleep(server);continue;}
+        if (strcmp(command,"resume")==0) {madway_power_resume(server);continue;}
+        if (g_str_has_prefix(command,"lid-managed ")) {
+            server->managing_lid=server->session!=NULL && strcmp(command,"lid-managed 1")==0;
+            madway_arrange_outputs(server);continue;
+        }
+        if(server->locked)continue;
         unsigned workspace, identity;
         if (sscanf(command, "workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
             madway_workspace_switch(server, workspace);
@@ -206,10 +266,20 @@ static int handle_control(int fd, uint32_t mask, void *data)
         {
             struct madway_view *target;
             wl_list_for_each(target, &server->layout_views, layout_link)
-                if (target->id == identity && madway_view_visible(target))
+                if (target->id == identity && target->mapped && target->workspace == server->active_workspace)
                 { madway_focus_view(server, target); break; }
             server->switcher_active = false;
             madway_session_publish_state(server);
+        }
+        else if (sscanf(command, "toggle-task %u", &identity) == 1)
+        {
+            struct madway_view *target;
+            wl_list_for_each(target, &server->layout_views, layout_link)
+                if (target->id == identity && target->mapped && target->workspace == server->active_workspace) {
+                    if (target == server->focused_view && !target->minimized) madway_set_minimized(target,true);
+                    else madway_focus_view(server,target);
+                    break;
+                }
         }
         else if (g_str_has_prefix(command, "tile "))
             madway_move_tile(server, command + 5);
@@ -226,6 +296,8 @@ static int handle_control(int fd, uint32_t mask, void *data)
             madway_toggle_floating(server->focused_view);
         else if (strcmp(command, "maximize") == 0 && server->focused_view != NULL)
             madway_set_maximized(server->focused_view, !server->focused_view->maximized);
+        else if (strcmp(command, "minimize") == 0 && server->focused_view != NULL)
+            madway_set_minimized(server->focused_view, true);
         else if (strcmp(command, "fullscreen") == 0 && server->focused_view != NULL)
             madway_set_fullscreen(server->focused_view, !server->focused_view->fullscreen);
         else if (strcmp(command, "close") == 0 && server->focused_view != NULL)
@@ -240,6 +312,7 @@ bool madway_session_init(struct madway_server *server)
     bool ok = g_mkdir_with_parents(directory, 0700) == 0;
     g_free(directory);
     if (!ok) return false;
+    madway_preview_clear(server);
     char *path = session_path(server, "compositor.sock");
     struct sockaddr_un address = {.sun_family = AF_UNIX};
     if (strlen(path) >= sizeof(address.sun_path)) { g_free(path); return false; }
@@ -258,6 +331,7 @@ void madway_session_finish(struct madway_server *server)
     if (server->session_control_event != NULL) wl_event_source_remove(server->session_control_event);
     if (server->session_control_fd >= 0) close(server->session_control_fd);
     if (server->socket_name == NULL) return;
+    madway_preview_clear(server);
     char *path = session_path(server, "compositor.sock"); g_unlink(path); g_free(path);
     path = session_path(server, "desktop.json"); g_unlink(path); g_free(path);
 }
@@ -275,22 +349,40 @@ static void append_json_string(GString *text, const char *value)
 void madway_session_publish_state(struct madway_server *server)
 {
     if (server->shutting_down || server->socket_name == NULL) return;
+    madway_taskbar_sync(server);
     GString *text = g_string_new(NULL);
     g_string_append_printf(text, "{\"workspace\":%u,\"title\":", server->active_workspace);
-    struct madway_view *view = server->focused_view;
+    struct madway_view *view = server->locked?NULL:server->focused_view;
     append_json_string(text, view != NULL && madway_view_visible(view) ? view->toplevel->title : "");
+    g_string_append(text, ",\"app_id\":");
+    append_json_string(text, view != NULL && madway_view_visible(view) ? view->toplevel->app_id : "");
+    g_string_append(text,",\"input_error\":");append_json_string(text,server->input_error);
+    g_string_append_printf(text,",\"native\":%s,\"lid_present\":%s,\"lid_closed\":%s,\"sleeping\":%s",
+            server->session!=NULL?"true":"false",server->lid_present?"true":"false",server->lid_closed?"true":"false",server->sleeping?"true":"false");
+    g_string_append_printf(text,",\"locked\":%s,\"lock_ready\":%s,\"lock_client_pid\":%d,\"lock_request\":%u",
+            server->locked?"true":"false",madway_lock_ready(server)?"true":"false",(int)madway_lock_client_pid(server),madway_lock_request_serial(server));
     g_string_append_printf(text, ",\"has_window\":%s,\"switcher\":%s,\"windows\":[",
             view != NULL && madway_view_visible(view) ? "true" : "false", server->switcher_active ? "true" : "false");
     bool first = true;
     struct madway_view *entry;
     wl_list_for_each(entry, &server->layout_views, layout_link)
-        if (madway_view_visible(entry))
+        if (!server->locked && entry->mapped && entry->workspace == server->active_workspace && !entry->desktop_overlay)
         {
             g_string_append_printf(text, "%s{\"id\":%u,\"focused\":%s,\"title\":", first ? "" : ",", entry->id,
                     entry == server->focused_view ? "true" : "false");
             append_json_string(text, entry->toplevel->title);
-            g_string_append(text, "}");first = false;
+            g_string_append(text, ",\"app_id\":");
+            append_json_string(text, entry->toplevel->app_id);
+            g_string_append_printf(text, ",\"preview\":%u,\"minimized\":%s}", entry->preview_serial, entry->minimized ? "true" : "false");first = false;
         }
+    g_string_append(text,"],\"backgrounds\":[");
+    struct madway_layer *layer;first=true;
+    wl_list_for_each(layer,&server->layers,link) {
+        if (!layer->mapped || !layer->surface->output->enabled || strcmp(layer->surface->namespace,"wallpaper")) continue;
+        pid_t pid;wl_client_get_credentials(wl_resource_get_client(layer->surface->resource),&pid,NULL,NULL);
+        g_string_append_printf(text,"%s{\"pid\":%d,\"output\":",first?"":",",(int)pid);
+        append_json_string(text,layer->surface->output->name);g_string_append_c(text,'}');first=false;
+    }
     g_string_append_printf(text, "],\"keep_above\":%s,\"output_x\":%d,\"output_y\":%d}\n",
             view != NULL && view->keep_above ? "true" : "false",
             view != NULL && view->output != NULL ? view->output->layout_x : 0,

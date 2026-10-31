@@ -17,14 +17,36 @@ with tempfile.TemporaryDirectory(prefix='madway-installer-test-') as tmp:
     assert result.returncode==2 and not stage.exists()
     subprocess.run(args,check=True,stdout=subprocess.DEVNULL)
     binaries=stage/'usr/local/bin'
-    for name in ('madway','madway-session','madway-shell','madway-panel','madway-script'):
+    for name in ('madway','madway-session','madway-shell','madway-panel','madway-script','madway-terminal','madway-screenshot','madway-desktop'):
         assert os.access(binaries/name,os.X_OK)
     entry=stage/'usr/share/wayland-sessions/madway.desktop'
+    data_dir=stage/'usr/local/share/madway'
+    assert (binaries/'madway_power.py').is_file()
+    assert (binaries/'madway_lock.py').is_file()
+    assert (binaries/'madway_wallpaper.py').is_file()
+    assert (binaries/'madway_files.py').is_file()
+    assert (data_dir/'settings.css').is_file()
+    assert (data_dir/'eau-common.css').is_file() and (data_dir/'eau-panel.css').is_file()
+    local_wallpaper=repo/'share/madway/wallpapers/Abstract Blue.png'
+    if local_wallpaper.is_file():
+        assert (data_dir/'wallpapers/Abstract Blue.png').read_bytes()==local_wallpaper.read_bytes()
+    preset_env={**os.environ,'XDG_CONFIG_HOME':str(root/'preset-config'),'XDG_RUNTIME_DIR':str(root/'preset-runtime')}
+    subprocess.run([str(binaries/'madway-shell'),'preset','gershwin'],env=preset_env,check=True,stdout=subprocess.DEVNULL)
+    import configparser
+    preset=configparser.ConfigParser(interpolation=None);preset.read(root/'preset-config/madway/settings.ini')
+    assert preset.get('appearance','theme')=='gershwin'
+    assert preset.get('wallpaper','path')==(str(data_dir/'wallpapers/Abstract Blue.png') if local_wallpaper.is_file() else '')
     assert 'Exec=/usr/local/bin/madway-session --native' in entry.read_text()
     assert not any(path.suffix in ('.ogg','.mp3','.wav','.jpg','.flp') for path in stage.rglob('*'))
     if shutil.which('desktop-file-validate'):
         subprocess.run(['desktop-file-validate',str(entry)],check=True)
     fake=root/'fake-bin';fake.mkdir()
+    (fake/'konsole').write_text('#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+    (fake/'konsole').chmod(0o755)
+    terminal_env={**os.environ,'PATH':str(fake)+':'+os.environ['PATH']}
+    terminal_args=['-e','printf','literal argument with spaces','$not-expanded']
+    launched=json.loads(subprocess.check_output([str(binaries/'madway-terminal'),*terminal_args],env=terminal_env,text=True))
+    assert launched==['--separate','--platform','wayland',*terminal_args]
     shutil.copy2(binaries/'madway-session',fake/'madway-session')
     (fake/'madway').write_text('''#!/usr/bin/env python3
 import json,os,sys
@@ -69,4 +91,4 @@ print(json.dumps(dict(environment={name:os.environ.get(name) for name in names},
     invalid=subprocess.run([*args,'--dry-run','--prefix','/tmp/madway prefix'],capture_output=True,text=True)
     assert invalid.returncode==2
     print('PASS: login-manager Exec compatibility, quoted-path failure reproduced, and private native log rotation.')
-print('PASS: dry run, staged native-session installation, no personal assets, and native/nested launcher environment separation.')
+print('PASS: dry run, staged native-session installation, optional local wallpaper, no personal sounds, and native/nested launcher environment separation.')

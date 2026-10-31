@@ -7,13 +7,16 @@
 #include "input.h"
 #include "session.h"
 #include "layer.h"
+#include "preview.h"
+#include "transition.h"
+#include "motion.h"
 #include <string.h>
 #include <wlr/util/edges.h>
 #include <wlr/util/log.h>
 
 bool madway_view_visible(struct madway_view *view)
 {
-    return view->mapped && view->workspace == view->server->active_workspace;
+    return view->mapped && !view->minimized && view->workspace == view->server->active_workspace;
 }
 
 static struct madway_view *fullscreen_on(struct madway_server *server, struct madway_output *output)
@@ -48,6 +51,8 @@ static void configure_tile(struct madway_view *view, int x, int y, int width, in
 void madway_workspace_arrange(struct madway_server *server)
 {
     if (server->shutting_down) return;
+    madway_transition_cancel_running(server);
+    madway_motion_cancel_running(server);
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
     {
@@ -64,6 +69,7 @@ void madway_workspace_arrange(struct madway_server *server)
         wlr_scene_node_set_enabled(&view->scene_tree->node, visible);
     }
 
+    madway_arrange_layers(server);
     struct madway_output *output;
     wl_list_for_each(output, &server->outputs, link)
     {
@@ -137,7 +143,7 @@ void madway_workspace_focus(struct madway_server *server)
     if (server->shutting_down) return;
     struct madway_view *view;
     wl_list_for_each_reverse(view, &server->views, link)
-        if (madway_view_visible(view) && view->scene_tree->node.enabled)
+        if (madway_view_visible(view) && !view->desktop_overlay && view->scene_tree->node.enabled)
         {
             madway_focus_view(server, view);
             return;
@@ -153,9 +159,11 @@ void madway_workspace_switch(struct madway_server *server, unsigned workspace)
     madway_end_interactive(server);
     madway_cancel_pointer_grab(server);
     madway_focus_view(server, NULL);
+    madway_transition_prepare(server,workspace);
     server->active_workspace = workspace;
     madway_workspace_arrange(server);
     madway_workspace_focus(server);
+    madway_transition_start(server);
     wlr_log(WLR_INFO, "Workspace %u", workspace + 1);
 }
 
@@ -218,7 +226,7 @@ void madway_cycle_focus(struct madway_server *server, bool backwards)
         position = backwards ? position->prev : position->next;
         if (position == head) position = backwards ? position->prev : position->next;
         struct madway_view *view = wl_container_of(position, view, layout_link);
-        if (madway_view_visible(view))
+        if (view->mapped && view->workspace == server->active_workspace && !view->desktop_overlay)
         {
             madway_focus_view(server, view);
             madway_rebase_cursor(server);
@@ -266,6 +274,7 @@ void madway_switcher_step(struct madway_server *server, bool backwards)
     {
         server->switcher_origin = server->focused_view != NULL ? server->focused_view->id : 0;
         server->switcher_active = true;
+        madway_preview_capture(server);
     }
     madway_cycle_focus(server, backwards);
     madway_session_publish_state(server);

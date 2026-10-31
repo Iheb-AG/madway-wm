@@ -137,6 +137,7 @@ static int run_stage(void *data) {
                 assert(view->frame_title_height > 0 && view->frame_title_height <= 16);
                 key(KEY_VOLUMEUP,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_VOLUMEUP,WL_KEYBOARD_KEY_STATE_RELEASED);
                 key(KEY_BRIGHTNESSUP,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_BRIGHTNESSUP,WL_KEYBOARD_KEY_STATE_RELEASED);
+                key(KEY_SYSRQ,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_SYSRQ,WL_KEYBOARD_KEY_STATE_RELEASED);
                 fprintf(stderr,"SETTINGS WINDOW AND MEDIA KEYS PASS\n");stage=8;break;
             }
     } else if(stage==8 && server->config.tile_gap==4 && server->config.title_height==16) {

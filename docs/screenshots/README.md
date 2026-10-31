@@ -13,12 +13,21 @@ data and ignored Longhorn assets out of the images. Session sounds are disabled.
 - [Window switcher](switcher.png)
 - [Left panel](panel-left.png)
 - [Bottom panel](panel-bottom.png)
+- [Compact Midnight settings](settings.png)
+- [Desktop files](desktop-files.png)
 
 The mixer capture uses deterministic mock speakers, microphone, and application
 stream entries. These demonstrate the real GTK controls without reading or
 changing host audio.
 
-Regenerate from the repository root after building:
+The Midnight settings and desktop-file captures come from the private desktop
+file integration fixture. Its Desktop contains only a fixture folder and text
+files, on a solid-color background. It uses no personal files or wallpaper.
+Regenerate these two captures with `tests/desktop_files.py`; the outputs are
+`build/settings-compact.png` and `build/desktop-icons.png`.
+
+Regenerate the workstation, menu, mixer, launcher, switcher and panel captures
+from the repository root after building:
 
 ```sh
 dbus-run-session -- python3 tests/capture_desktop.py

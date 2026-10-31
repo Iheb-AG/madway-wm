@@ -13,6 +13,7 @@ void madway_begin_interactive(struct madway_view *view, enum madway_interactive_
 void madway_end_interactive(struct madway_server *server);
 void madway_update_interactive(struct madway_server *server);
 void madway_set_keep_above(struct madway_view *view, bool above);
+void madway_set_minimized(struct madway_view *view, bool minimized);
 void madway_set_maximized(struct madway_view *view, bool maximized);
 void madway_set_fullscreen(struct madway_view *view, bool fullscreen);
 void madway_arrange_views(struct madway_server *server);

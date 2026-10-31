@@ -26,7 +26,15 @@ def inspect_settings():
         assert not window.get_decorated(), "Settings must request the compositor's compact frame"
         stack = next(widget for widget in children(window) if isinstance(widget, Gtk.Stack))
         names = {stack.child_get_property(page, "name") for page in stack.get_children()}
-        assert names == {"Windows", "Displays", "Appearance", "Input", "Notifications", "Audio & brightness", "Session", "Panel"}, names
+        assert names == {"Windows", "Displays", "Appearance", "Desktop", "Input", "Keyboard", "Mouse & touchpad", "Notifications", "Audio & brightness", "Power", "Session", "Panel"}, names
+        grids=[widget for widget in children(stack) if isinstance(widget,Gtk.Grid)]
+        assert all(grid.get_row_spacing()==7 for grid in grids if grid.get_parent().get_parent() in stack.get_children())
+        sidebar=next(widget for widget in children(window) if isinstance(widget,Gtk.StackSidebar))
+        rows=[widget for widget in children(sidebar) if isinstance(widget,Gtk.ListBoxRow)]
+        assert rows
+        for row in rows:
+            border=row.get_style_context().get_border(Gtk.StateFlags.NORMAL)
+            assert not any((border.top,border.bottom,border.right)) and border.left==2, 'Unexpected category frame'
         for name in names:
             stack.set_visible_child_name(name)
             assert stack.get_visible_child_name() == name
@@ -45,7 +53,33 @@ def inspect_settings():
         control("Input", "Focus on hover").set_active(True)
         edges=control("Panel", "Screen edge")
         assert [row[1] for row in edges.get_model()]==["top","bottom","left","right"]
+        assert "80%" in control("Power", "Power status").get_text()
+        control("Power", "Low battery (%)").set_value(25)
+        assert control("Power", "Critical battery (%)").get_value_as_int()==10
+        assert control("Power", "Show battery in panel").get_active()
+        assert control('Power','Closing the lid').get_active_id()=='suspend'
+        assert control('Power','Lock before sleep').get_active()
+        assert not control('Power','').get_sensitive(),'Nested settings must disable host sleep'
+        control('Power','Closing the lid').set_active_id('auto')
+        control('Panel','Panel name').set_text('Fixture user')
+        tasks=control('Panel','Taskbar entries')
+        assert tasks.get_active_id()=='icons';tasks.set_active_id('names')
+        assert control('Mouse & touchpad','Tap to click').get_active()
+        control('Mouse & touchpad','Tap dragging').set_active(False)
+        control('Mouse & touchpad','Touchpad: natural scrolling').set_active(True)
+        control('Mouse & touchpad','Touchpad speed').set_value(.35)
+        control('Mouse & touchpad','Left-handed buttons').set_active(True)
+        assert control('Keyboard','Layout (XKB)').get_text()==''
+        assert control('Audio & brightness','Output volume').get_value_pos()==Gtk.PositionType.RIGHT
+        assert control('Appearance','Animate maximize / minimize').get_active()
         control("Windows", "New windows").set_active_id("tiled")
+        combo=control('Windows','New windows')
+        border=combo.get_style_context().get_border(Gtk.StateFlags.NORMAL)
+        assert not any((border.top,border.bottom,border.left,border.right)),'Duplicate dropdown frame'
+        spin=control('Windows','Title height (px)')
+        # GtkSpinButton inherits GtkEntry; its widget context is the outer frame.
+        border=spin.get_style_context().get_border(Gtk.StateFlags.NORMAL)
+        assert (border.top,border.bottom,border.left,border.right)==(1,1,1,1),'Numeric field lost its single-pixel frame'
         control("Windows", "Title height (px)").set_value(14)
         control("Windows", "Master width (%)").set_value(60)
         control("Notifications", "Position").set_active_id("bottom-left")
@@ -66,6 +100,16 @@ def inspect_settings():
         assert config.get("wallpaper", "type") == "color"
         assert config.get("wallpaper", "color") == "#101012"
         assert config.getboolean("input", "focus_follows_mouse")
+        assert config.getint("power", "low_percent")==25
+        assert config.getint("power", "critical_percent")==10
+        assert config.getboolean("power", "show_battery")
+        assert config.get('power','lid_action')=='auto'
+        assert config.getboolean('locking','before_sleep')
+        assert config.get('panel','label')=='Fixture user'
+        assert config.get('panel','tasks')=='names'
+        assert config.getboolean('touchpad','tap') and not config.getboolean('touchpad','tap_drag')
+        assert config.getboolean('touchpad','natural_scroll') and abs(config.getfloat('touchpad','speed')-.35)<.01
+        assert config.getboolean('mouse','left_handed')
         assert config.get("windows", "default_mode") == "tiled"
         assert config.getint("windows", "master_percent") == 60
         assert config.getint("appearance", "title_height") == 14

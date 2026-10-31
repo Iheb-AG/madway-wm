@@ -1,0 +1,32 @@
+/* Eau measurements and color stops are documented in docs/GERSHWIN.md. */
+* { font-family: Inter, sans-serif; font-size: 13px; }
+window { background-color: #ededed; color: #0d0d0d; }
+label { color: #0d0d0d; }
+button, combobox button {
+    min-height: 18px; padding: 0 8px; border-radius: 10px;
+    background-image: linear-gradient(to bottom, #ffffff, #dfdfdf 49%, #f5f5f5 50%, #eeeeee);
+    background-color: #eeeeee; color: #0d0d0d; border: 1px solid #999999;
+    box-shadow: inset 0 1px rgba(255,255,255,.7);
+}
+button:hover, button:focus { border-color: #666666; }
+button:active { background-image: linear-gradient(to bottom, #6488f3, #2a5fed); }
+button:active label { color: white; }
+entry, spinbutton { background: white; border: 1px solid #999999; border-radius: 3px; color: #0d0d0d; }
+entry:focus, spinbutton:focus { border-color: #6488f3; box-shadow: 0 0 0 1px #6488f3; }
+spinbutton button { border: 0; border-radius: 0; padding: 0 3px; }
+stacksidebar { background: #e4e4e4; border-right: 1px solid #b5b5b5; }
+stacksidebar row { min-height: 22px; padding: 0 6px; border: 0; box-shadow: none; }
+stacksidebar row label { color: #0d0d0d; }
+stacksidebar row:hover, stacksidebar row:selected, #entry:selected {
+    background-image: linear-gradient(to bottom, #6488f3, #2a5fed); color: white;
+}
+stacksidebar row:selected label { color: white; }
+scale trough { min-height: 4px; background: #c6c6c6; border: 1px solid #999999; border-radius: 3px; }
+scale highlight { background-image: linear-gradient(to bottom, #6488f3, #2a5fed); border-radius: 3px; }
+scale slider { min-width: 12px; min-height: 12px; border-radius: 7px; border: 1px solid #888888; background-image: linear-gradient(to bottom, white, #c6c6c6); }
+switch { background: #bbbbbb; border-radius: 9px; border: 1px solid #999999; }
+switch:checked { background: #6488f3; }
+switch slider { background-image: linear-gradient(to bottom, white, #dddddd); border-radius: 9px; }
+checkbutton check { background: white; border: 1px solid #999999; border-radius: 3px; }
+checkbutton check:checked { background: #6488f3; color: white; }
+separator { background: #cccccc; }

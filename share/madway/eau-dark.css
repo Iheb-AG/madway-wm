@@ -1,0 +1,27 @@
+/* Midnight variant: retain Eau geometry while changing its material and text. */
+window { background-color: #202124; color: #ededed; }
+label, .bar button label, .menu button label { color: #ededed; }
+button, combobox button {
+    background-image: linear-gradient(to bottom, #494b50, #34363b);
+    background-color: #34363b; color: #ededed; border-color: #5b5e65;
+    box-shadow: inset 0 1px rgba(255,255,255,.08);
+}
+entry, spinbutton, #input { background: #25272b; color: #ededed; border-color: #54575e; }
+stacksidebar { background: #292b30; border-color: #474950; }
+stacksidebar row label { color: #ededed; }
+scale trough { background: #151619; border-color: #555860; }
+scale slider { background-image: linear-gradient(to bottom, #d5d7dc, #999ca4); border-color: #222327; }
+checkbutton check { background: #26282d; border-color: #737680; }
+.bar { background-image: linear-gradient(to bottom, rgba(49,51,57,.97), rgba(33,35,40,.97)); border-color: #4c4f57; }
+.bar.left, .bar.right { background-image: linear-gradient(to right, #313339, #212328); }
+.bar button, .menu button { background: transparent; border: 0; box-shadow: none; color: #ededed; }
+.menu { background: rgba(43,45,50,.98); color: #ededed; border-color: #565960; }
+.menu .menu-title { color: #ededed; }
+.menu .menu-info { color: #a6a8ad; }
+.menu button:disabled label { color: #777a82; }
+.bar button:hover, .bar button:focus, .bar button.selected, .menu button:hover, .menu button:focus,
+stacksidebar row:selected { background-image: linear-gradient(to bottom, #416cdb, #3155ad); }
+.bar button:hover label, .menu button:hover label, stacksidebar row:selected label { color: white; }
+window.menu-popup, window#waybar { background: transparent; }
+window#waybar > box { background: rgba(43,45,50,.96); border-color: #5b5e65; }
+#tray menu { background: #2b2d31; color: #ededed; }

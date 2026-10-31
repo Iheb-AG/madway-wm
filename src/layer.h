@@ -16,10 +16,11 @@ struct madway_layer
     struct wl_list link;
     struct wl_listener commit, map, unmap, destroy, new_popup;
     bool mapped;
+    struct madway_dock *dock;
 };
 
 bool madway_init_layers(struct madway_server *server);
-void madway_arrange_layers(struct madway_server *server);
+bool madway_arrange_layers(struct madway_server *server);
 void madway_layer_output_destroy(struct madway_server *server, struct wlr_output *output);
 void madway_layer_focus(struct madway_layer *layer);
 struct madway_layer *madway_layer_at(struct madway_server *server, bool above_windows,

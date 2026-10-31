@@ -4,6 +4,8 @@
 #include "input.h"
 #include "workspace.h"
 #include "layer.h"
+#include "power.h"
+#include "lock.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <math.h>
@@ -75,6 +77,7 @@ void madway_publish_outputs(struct madway_server *server)
 void madway_arrange_outputs(struct madway_server *server)
 {
     if (server->shutting_down) return;
+    madway_power_lid_outputs(server);
     struct madway_output *output;
     bool any_enabled = false;
     wl_list_for_each(output, &server->outputs, link) any_enabled |= output->output->enabled;
@@ -85,7 +88,7 @@ void madway_arrange_outputs(struct madway_server *server)
             struct wlr_output_state state;
             wlr_output_state_init(&state);
             wlr_output_state_set_enabled(&state, true);
-            bool recovered = wlr_output_test_state(output->output, &state) &&
+            bool recovered = madway_lock_secure_output(output,&state) && wlr_output_test_state(output->output, &state) &&
                 wlr_output_commit_state(output->output, &state);
             wlr_output_state_finish(&state);
             if (recovered) break;
@@ -143,6 +146,7 @@ void madway_arrange_outputs(struct madway_server *server)
         wlr_cursor_warp_closest(server->cursor, NULL, server->cursor->x, server->cursor->y);
         madway_rebase_cursor(server);
     }
+    madway_lock_arrange(server);
     madway_publish_outputs(server);
 }
 
@@ -162,7 +166,15 @@ static bool configure(struct madway_server *server, struct wlr_output_configurat
     size_t count = 0;
     struct wlr_backend_output_state *states = wlr_output_configuration_v1_build_state(config, &count);
     if (states == NULL) return false;
-    bool ok = wlr_backend_test(server->backend, states, count);
+    bool ok = true;
+    if(server->locked && !test) {
+        for(size_t i=0;i<count;++i) {
+            struct madway_output *output;
+            wl_list_for_each(output,&server->outputs,link)
+                if(output->output==states[i].output && !madway_lock_secure_output(output,&states[i].base))ok=false;
+        }
+    }
+    if(ok)ok = wlr_backend_test(server->backend, states, count);
     if (ok && !test) ok = wlr_backend_commit(server->backend, states, count);
     for (size_t i = 0; i < count; ++i) wlr_output_state_finish(&states[i].base);
     free(states);

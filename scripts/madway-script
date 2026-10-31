@@ -29,6 +29,10 @@ def parse(source, base):
                 message = dict(action='window-'+('floating' if args[0] == 'toggle-floating' else 'above' if args[0] == 'toggle-above' else args[0]))
             elif name == 'tile' and len(args) == 1 and args[0] in ('left', 'right', 'up', 'down'):
                 message = dict(action='tile', direction=args[0])
+            elif name == 'overlay' and len(args)==1 and args[0] in ('toggle','stop'):
+                message = dict(action='overlay-'+args[0])
+            elif name == 'overlay' and len(args)==1 and args[0] in api['demoscenes']():
+                message = dict(action='overlay-start', scene=args[0])
             elif name == 'theme' and len(args) == 1:
                 message = dict(action='script-config', updates={'appearance.theme':args[0]})
             elif name == 'set' and len(args) == 2:

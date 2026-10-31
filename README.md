@@ -1,460 +1,283 @@
 # madway-wm
 
-An experimental C17 compositor using wlroots 0.20. The first preview is
-**v0.1.0-alpha.1**; see [CHANGELOG.md](CHANGELOG.md) for its scope and limitations.
-The current milestone displays native
-Wayland application surfaces inside a nested session,
-with keyboard/pointer input, master-and-stack tiling, floating windows, nine
-workspaces, compact retro frames, notifications, launchers, wallpaper, session
-sounds, a compact top bar, a desktop utility menu, and categorized settings.
+**madway** is an experimental Wayland compositor and desktop written in C17 with
+wlroots 0.20. It combines compact workstation chrome, floating and tiled windows,
+and a configurable desktop shell. Run it inside an existing Wayland desktop for
+development, or select it from your login screen for a native hardware session.
 
-![madway with Kitty, Firefox, and settings](docs/screenshots/workstation.png)
+The latest tagged preview is **v0.1.0-alpha.1**. This branch includes the
+[Unreleased changes](CHANGELOG.md), including desktop files, drag-and-drop,
+window previews, animations, laptop power management and screen locking.
 
-[Desktop menu screenshot](docs/screenshots/desktop-menu.png) · [Audio mixer](docs/screenshots/panel-audio.png) · [Application search](docs/screenshots/launcher.png) · [Screenshot details](docs/screenshots/README.md)
+![madway running a terminal, Firefox and compact settings](docs/screenshots/workstation.png)
 
-The audio dropdown lists output devices, microphone/monitor inputs, and active
-playback/recording streams. Each has a 0–100% volume slider and mute control;
-outputs/inputs also offer default-device selection for new streams. Application
-rows appear while a stream exists, so silent/inactive apps may not be listed.
-Device changes are refreshed every two seconds. In a nested session, these are
-the audio devices/streams of your existing sound server.
+[Desktop menu](docs/screenshots/desktop-menu.png) ·
+[Audio mixer](docs/screenshots/panel-audio.png) ·
+[Application search](docs/screenshots/launcher.png) ·
+[Window previews](docs/screenshots/switcher.png) ·
+[Compact settings](docs/screenshots/settings.png) ·
+[Desktop files](docs/screenshots/desktop-files.png)
 
-Hover **Applications**, **Settings**, **Window**, **Workspaces**, or **Session**
-in the madway menu to open a list beside the parent. Click also opens the list;
-Left returns, Right opens a focused submenu, and Escape closes it. Applications
-includes installed visible desktop entries and a search action. **Alt+D** opens
-a compact centered search palette; **Alt+Shift+D** searches commands/scripts.
+These are real captures from isolated test sessions with temporary homes and
+fixture content. See [screenshot details and regeneration](docs/screenshots/README.md).
+Konsole is the default terminal; the workstation capture uses Kitty as another
+native Wayland client.
 
-**Alt+Tab** now shows a window list on the focused output. Hold Alt and press Tab
-again to cycle, Shift+Tab to go backward, release Alt to keep the selection, or
-press Escape to cancel. If the configured modifier is Super, use Super instead.
-The list includes mapped windows on the current global workspace.
+## What works
 
-For tiled windows, **Ctrl+Shift+Left/Right** exchanges master/stack placement;
-**Ctrl+Shift+Up/Down** reorders the stack. Settings → Input → **Focus on hover**
-enables optional pointer-driven focus (off by default). Layout updates alone do
-not change focus.
+- **Window management:** floating by default, master/stack tiling, nine global
+  workspaces, fullscreen, maximize, minimize, keep-above and resizable tiles.
+  Alt+Tab shows image previews, including covered and minimized windows.
+- **Compact shell:** a panel on any of the four screen edges, cascading utility
+  menus, a taskbar with icons or application names, and an existing Waybar dock
+  with a StatusNotifier tray. Task entries minimize, focus or restore windows.
+  The dock can hide behind maximized applications and slide out on edge hover.
+- **Desktop files:** icons from the XDG Desktop directory (normally `~/Desktop`),
+  live updates, folder/text-file creation, rename, copy/paste, Trash and grid
+  reordering. Native Wayland drag-and-drop works between applications and the
+  desktop. Right-click empty space to show or hide desktop icons.
+- **Appearance:** Black, Amber workstation, Green terminal, Slate blue, Paper
+  workstation, Gershwin/Eau and Gershwin Midnight themes. Solid backgrounds,
+  wallpaper images and folder/image-selection slideshows with an enable/pause
+  switch. Workspace, minimize, maximize and dock motion follows output frames
+  with configurable cubic Bézier animations.
+- **Desktop utilities:** Wofi application/command search, Mako notifications,
+  per-device and per-application audio sliders, multimedia-key indicators,
+  brightness controls, screenshots saved to PNG and copied to the clipboard,
+  and optional personal session sounds.
+- **Hardware and input:** multi-monitor layout, modes, scaling and rotation;
+  live keyboard layout/repeat settings; mouse and touchpad settings, including
+  native tap-to-click; optional focus on hover.
+- **Laptop sessions:** battery level and warnings, configurable lid behavior,
+  logind sleep/resume, and lock-before-sleep using swaylock and the Wayland
+  session-lock protocol. Locking waits for protected frames on enabled outputs.
+- **Automation:** a small `.madway` command language, a CLI and optional startup
+  scripts. Settings apply live and persist across sessions.
 
-Settings → Appearance offers **Black**, **Amber workstation**, **Green terminal**,
-**Slate blue**, and **Paper workstation** profiles, plus an explicit **Solid color**
-or **Wallpaper image** background choice. Themes apply to madway's frames, panel,
-menus, switcher, settings, launcher and notifications. Application-owned UI keeps
-its own theme; background colour/image is chosen separately.
+## Build and try it
 
-Use `madway-script FILE` for simple workflows and optional
-`~/.config/madway/startup.madway` for startup commands. See the
-[command syntax](docs/SCRIPTING.md), [example](examples/workstation.madway),
-and [window switcher preview](docs/screenshots/switcher.png).
-
-Settings → Panel → **Screen edge** places the panel at the top, bottom, left,
-or right on each monitor. **Thickness** controls its height on horizontal edges
-and width on vertical edges. Side panels use compact buttons and tooltips;
-dropdowns open toward the desktop. Placement applies live and is saved.
-
-Use the panel's **Window → Keep above others**, or **Alt+A**, to pin a window
-above other applications, including fullscreen video. It stays on its workspace
-and below shell panels/menus. This is useful for PiP; enable it on the PiP window.
-The option toggles independently of floating/tiled mode. Super replaces Alt if
-chosen as your modifier.
-
-Resize tiles by dragging madway's shared 1px borders, or **Alt+right-drag** inside
-a tile. Horizontal motion adjusts the master/stack split on that output; vertical
-motion inside stack tiles adjusts a neighbouring pair of heights. The layout
-keeps its gaps and tiles remain tiled. A single tile already fills the output;
-outer output edges cannot be dragged outward. Split widths and window weights
-are session state. Changing the default **Master width** setting resets width
-overrides; new windows start with equal weight.
-
-## Build
-
-Requires CMake 3.20+, a C compiler, pkg-config, and development files for
-`wlroots-0.20`, `wayland-server`, `xkbcommon`, `pangocairo` (Pango/Cairo text
-rendering), and `gio-2.0`. Also requires `wayland-scanner`.
+Build requirements: a C17 compiler, CMake 3.20+, pkg-config, `wayland-scanner`,
+and development packages for **wlroots-0.20**, **wayland-server**, **xkbcommon**,
+**pangocairo**, **gio-2.0**, **libinput** and **pixman-1**.
 
 ```sh
+git clone git@github.com:Iheb-AG/madway-wm.git
+cd madway-wm
 cmake -S . -B build
 cmake --build build
 ```
 
-## Start the desktop
+The desktop shell uses Python 3, PyGObject with GTK 3 and GtkLayerShell bindings,
+`dbus-run-session`, Mako, Wofi, swaybg, swaylock, Konsole, Waybar, grim, slurp,
+wl-clipboard, xdg-user-dirs and `notify-send`. Audio controls use `wpctl` and
+`pactl`, with a PulseAudio-compatible server such as pipewire-pulse. Brightness
+uses optional `brightnessctl`, falling back to logind through `busctl`. Personal
+sounds use `pw-play` or `paplay`.
 
-From a terminal in your existing Wayland desktop, start madway:
-
-```sh
-WLR_BACKENDS=wayland WLR_RENDERER=pixman ./scripts/madway-session
-```
-
-The session wrapper starts a private D-Bus session and the desktop helper. This
-lets applications inside madway use its notification manager while your host
-desktop keeps its own. Launch applications from Kitty or the launcher inside
-madway so they inherit both its Wayland socket and its D-Bus environment.
-Running `./build/madway` directly starts only the compositor.
-
-Desktop runtime dependencies: `python3` with PyGObject (`gi`), GTK 3, Gio, and GtkLayerShell 0.1
-introspection bindings (`gtk-layer-shell`), `dbus-run-session`, **Mako**, **Wofi**, **swaybg**, **Kitty**,
-`notify-send`, **WirePlumber** (`wpctl`), and **pactl** (`libpulse` on Arch).
-The audio mixer requires a PulseAudio-compatible server, such as **pipewire-pulse**. Sounds use `pw-play` (PipeWire) or
-`paplay` (PulseAudio). Brightness uses optional `brightnessctl`, otherwise logind
-through `busctl`. These programs are already installed here except brightnessctl.
+Check the installed tools, then start a nested desktop:
 
 ```sh
 ./scripts/madway-shell doctor
+WLR_BACKENDS=wayland WLR_RENDERER=pixman ./scripts/madway-session
 ```
 
-Madway prints its own socket name, for example:
+Focus the new madway window and press **Alt+Enter** for Konsole. Launch other
+applications from that terminal or the launcher so they inherit the session's
+Wayland and D-Bus environment. Running `./build/madway` alone starts only the
+compositor, without the desktop services.
 
-```text
-Listening on WAYLAND_DISPLAY=wayland-1
-```
-
-Focus the outer madway window and press **Alt+Enter** to launch Kitty on the
-active workspace. Kitty must be installed and available on `PATH`.
-
-Alternatively, from a second terminal in your existing desktop, launch Kitty.
-Replace `wayland-1` with the name printed by madway:
-
-```sh
-WAYLAND_DISPLAY=wayland-1 kitty -o linux_display_server=wayland
-```
-
-New normal windows **float by default**. Choose Floating or Master/stack in
-Settings → Windows to set the policy for future windows. Use **Alt+T** to switch
-the focused window between floating and tiled (Alt+Space remains an alias).
-When tiling, the first tile is the master on the left, with later tiles stacked
-on the right. Master width is configurable from 25% to 75%. There is 1 logical pixel between
-tiles and no outer padding. A single tile occupies the output. Focus changes do
-not reorder the tiles. New windows use the output under the pointer when possible.
-
-To prioritize application space, tiled server-decorated windows have only a 1px
-border; no title bar. The focused tile has a light gray border. Floating windows have
-a 14-logical-pixel title bar by default, 1px bevels, a monospace title, and square maximize/
-close controls. Inactive floating titles are slate gray. Title images are cached
-until their text, size, or state changes. Dialogs with a parent window float by
-default.
-
-Applications explicitly requesting client-side decorations keep drawing their
-own frame. Applications that do not use decoration negotiation (including some
-GTK applications) also keep their own chrome. Kitty's
-`hide_window_decorations=yes` opts out of madway's frame. Remove that override to
-try the compositor's decorations. Application toolbars and tabs remain under
-application control.
-
-The border around the outer nested window belongs to your host desktop;
-madway's frames surround individual applications inside it.
-
-New windows receive keyboard focus automatically. Click a window to focus and
-raise it; click the background to clear keyboard focus. You can type commands,
-use modifier keys, select text with the mouse, and scroll. Pointer movement
-alone does not change keyboard focus. Closing the focused window restores focus
-to the topmost remaining mapped window.
-
-Press Alt+Escape while madway receives keyboard input to exit. Your host
-desktop may reserve shortcuts; Ctrl+C in the terminal running madway is also
-available. The nested window must have focus in your host desktop to receive
-keyboard input.
-
-## Workspace and window controls
-
-All shortcuts below use Alt by default. Settings → Input can switch the modifier
-to Super for both shortcuts and move/resize gestures. Their press and release events are
-consumed by madway, so they do not become terminal input.
-
-| Keys | Action |
-| --- | --- |
-| Enter | Launch Kitty on the active workspace |
-| D | Search installed applications (Wofi drun) |
-| Shift + D | Run an executable or script from PATH (Wofi run) |
-| Comma | Open madway settings |
-| 1 through 9 | Switch workspace |
-| Shift + 1 through 9 | Move the focused window to that workspace without following it |
-| T / Space | Toggle floating/tiled; restore a maximized/fullscreen window to floating |
-| F | Toggle the focused application's fullscreen state |
-| M | Maximize / restore |
-| Tab / Shift+Tab | Cycle focus forward / backward in stable window order |
-| Q | Request that the focused application close |
-| Escape | Exit madway |
-
-Workspace selection is global across outputs in this version. Hidden-workspace
-windows retain their application state but are removed from scene visibility and
-keyboard focus. Switching back restores focus to the topmost visible window.
-Floating/tiled state and normal floating geometry are retained. An output resize
-or removal recomputes the layout and reassigns windows from a removed output.
-
-Fullscreen uses the entire madway output: no madway title bar, border, or gaps.
-Other windows on that output are hidden until fullscreen ends or focus cycles to
-another window. Exiting fullscreen restores the preceding tiled/floating state.
-The application can also request fullscreen itself, for example Firefox's F11.
-
-The **outer nested window** is managed by your existing desktop. Use that
-desktop's fullscreen/window-menu action to make madway itself fill the physical
-monitor; Alt+F controls an application inside madway. The experimental native
-session runs directly on physical outputs without this outer host window; see
-[installation](docs/INSTALL.md).
-
-## Floating-window gestures
-
-| Action | Control |
-| --- | --- |
-| Move | Drag madway's title bar, or Alt + left drag inside a window |
-| Resize | Drag the 1px frame edges/corners, or Alt + right drag inside a window |
-| Maximize / restore | Click the square title-bar button |
-| Close | Click the title-bar X, or exit the application normally |
-| Fullscreen | Alt+F, or the application's fullscreen action |
-
-Applications can also request interactive move/resize through their own
-decorations; requests are validated against the pointer grab serial. Move and
-resize gestures apply to floating windows. Press Alt+T to float a tile
-first. Restore maximized/fullscreen windows before moving or resizing them.
-Resizing respects application minimum/maximum size hints. When resizing the
-left/top edges, the opposite edge remains anchored while the client acknowledges
-and draws the requested size. The nested outer window can still be resized
-using your host desktop. Host shortcuts may intercept Alt gestures.
-
-XDG popups now get an initial configure, a scene surface, and output constraints.
-The standard clipboard data-device protocol and primary-selection protocol
-are supported. Primary selection is separate from the regular clipboard. Minimizing/restoring hidden windows, arbitrary key bindings,
-clipboard persistence, and Xwayland
-remain future work. Very constrained layouts and clients that decline suggested
-tile sizes need further compatibility work.
-
-Keyboard layouts use the backend keymap when available,
-otherwise the default XKB keymap. Repeat defaults to 25 keys/second after
-a 600 ms delay and can be changed live in Settings → Input.
-
-Close the outer madway window or press Ctrl+C in the terminal running madway to
-stop the compositor. Client connections are closed during shutdown.
-
-## Desktop services and settings
-
-**Alt+Comma** opens the settings window. It controls wallpaper image/fit/color,
-floating title height (12–24px), tile gaps (0–12px), notifications, session sounds,
-volume, and brightness. Settings are divided into Windows, Displays, Appearance,
-Input, Notifications, Audio & brightness, Session, and Panel categories. The settings
-window uses madway’s own title bar, capped at 14px, instead of GTK’s larger header. Apply saves `~/.config/madway/settings.ini` (or
-`$XDG_CONFIG_HOME/madway/settings.ini`) and updates the running session. The
-provided `share/madway/settings.ini` documents the defaults. Tiled windows still
-have no title bar; fullscreen applications have no madway borders or gaps.
-
-Mako displays application notifications at the top right with square gray
-borders. Volume up/down/mute and brightness up/down keys work without modifiers
-and display short percentage/progress notifications. Changes use 5% steps;
-volume is capped at 100% and brightness at 1–100%. The settings sliders offer
-explicit values. Brightness requires a supported backlight and session access;
-external monitor brightness/DDC is not implemented. In a nested session these
-controls affect the host machine. Your host desktop may intercept multimedia
-keys or Alt shortcuts before madway receives them.
-
-Wofi provides two launcher modes: **Alt+D** searches installed `.desktop`
-applications, and **Alt+Shift+D** searches executable commands/scripts. Put your
-own executable scripts in `~/.local/bin`; this directory is added to the helper's
-PATH. Escape closes the launcher and restores application focus. A launcher
-uses an overlay only while open, so it reserves no permanent screen area.
-
-Swaybg manages the wallpaper on the background layer. Choose an image in
-settings or leave the path empty for a solid color. Supported image fitting
-modes are fill, fit, center, stretch, and tile. Settings and launcher windows
-use the same compact black/grayscale monospace styling as the compositor.
-
-No wallpaper images or sounds are bundled or selected by default. The personal
-`longhorn assets/` directory is ignored by Git and excluded from installation.
-Session sounds are disabled by default. To use your own clips, set
-the Startup, Logout, and Shutdown sound files in settings (or
-`sounds.startup`, `sounds.logout`, and `sounds.shutdown` in the INI file), then
-enable Session sounds and click Apply. The Sound test button saves the current
-settings and previews the startup clip. Playback requires a format
-supported by the selected audio player.
-
-When configured, shutdown through the settings window plays its clip before
-requesting `systemctl poweroff`; this
-button shuts down the **whole computer**, including when madway is nested.
-Shutdown initiated elsewhere is detected through logind's PrepareForShutdown
-signal, with best-effort playback while audio is still available. The settings
-window offers a sound preview and sound level for configured clips.
-
-The small desktop helper owns these programs and stops them on logout. The
-compositor handles layer-shell positioning, focus, and rendering; external
-services supply notifications, wallpaper pixels, and launcher content. This
-keeps hardware commands and desktop UI work outside the compositor event loop.
-Settings also cover the default window mode, master width, repeat rate/delay,
-Alt/Super modifier, notification position/width/timeout, media indicators, and
-volume/brightness key steps. Keyboard-layout editing, network management, and
-arbitrary key binding editing remain future settings pages.
-
-For a local installation, configure the intended prefix before building:
-
-```sh
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-cmake --build build
-cmake --install build
-```
-
-Then run `~/.local/bin/madway-session`. For a native login entry and system installation, use the
-[installer](docs/INSTALL.md); physical hardware validation remains open.
-
-## Top bar and desktop menu
-
-An 18px black top bar appears on each output. Apps, Run, and Settings are grouped
-under **madway**. Every remaining control opens a dropdown: workspace selection,
-active-window actions, system status, audio/brightness, clock, and session tools.
-The status dropdown shows CPU/RAM readings; clock and status menus link to their
-options. Narrow outputs hide optional status/session controls. Panel settings
-control visibility, height (16–32px), telemetry, and the clock. Tiling and
-maximization reserve the bar's space; fullscreen applications hide it on their
-output. Custom title bars default to 14px, tile gaps to 1px, and shell/menu text
-uses smaller monospace fonts with tighter padding and neutral gray focus states.
-
-Click **madway** or **right-click empty desktop space** to open the same compact
-menu. It contains application/command launchers, Kitty, settings categories,
-window actions, workspaces, and session utilities. Application right-clicks remain
-with the application. The menu supports arrows, Enter, Escape, and outside-click
-dismissal. Its settings shortcuts switch categories without discarding unsaved
-edits in an already-open settings window. Computer shutdown stays behind the
-settings confirmation.
-
-The panel is a GTK layer-shell client; `madway-panel` ships alongside the helper.
-The compositor supplies reserved output space, menu focus, a private desktop
-control socket, and state for active titles/workspaces. `grim` screenshots use
-the standard screencopy protocol.
-
-## Installing on a real machine
-
-On CachyOS/Arch, from the checkout as your normal user:
-
-```sh
-./scripts/install-madway --dry-run
-./scripts/install-madway --deps
-```
-
-Then log out and select **madway (experimental)** in your login screen. This adds
-a session alongside your existing desktop. See [INSTALL.md](docs/INSTALL.md) for
-staging, paths, requirements, native VT controls, and current limitations. The
-installer and launcher are tested in staging; a physical DRM session is not yet
-validated here.
-
-## Multiple monitors
-
-Settings → Displays lists connected madway outputs. Each has an enable switch,
-resolution/refresh selector, logical X/Y position, scale, and rotation/flip.
-Positions use logical pixels after scaling and rotation: to place a 1920px-wide
-screen at scale 2 beside another output, allow 960 logical pixels for its width.
-Click Apply to save profiles under `[output:NAME]` in the personal INI file.
-Profiles are reapplied on restart and when a named monitor reconnects. Refresh
-connected monitors after hotplug to refresh the form. At least one monitor must
-remain enabled; unsupported configurations are rejected and reported in settings.
-
-Each nested pointer is mapped to its own output before its local coordinates
-enter the shared pointer coordinate space. Nested cursors render in the output
-scene to avoid exhausting the host cursor-buffer queue.
-
-Outputs share the pointer coordinate space. Newly opened floating windows use
-the output under the pointer, windows follow output repositioning, and windows
-from a removed/disabled output are moved to a remaining output. Fullscreen and
-tiling use each output's own dimensions. Workspaces remain global across outputs.
-The standard wlr-output-management protocol is also exposed for tools such as
-`wdisplays`; its live changes are not automatically written to madway's INI file.
-
-In a nested session these settings configure madway's virtual outputs, rather
-than your host desktop's physical monitors. To try two nested outputs:
+To test two nested outputs:
 
 ```sh
 WLR_BACKENDS=wayland WLR_WL_OUTPUTS=2 WLR_RENDERER=pixman ./scripts/madway-session
 ```
 
-This creates two host windows that you can place on your physical screens.
-Physical monitor configuration
-requires running madway directly on the hardware backend. Physical DRM modes
-and hardware scaling have not yet been verified on this machine; integration
-checks use virtual outputs.
+These are two host windows. Nested display settings configure those virtual
+outputs; your existing desktop manages the physical monitors and the outer
+window's frame. Your host may intercept shortcuts before madway receives them.
+Alt+Escape exits madway; Ctrl+C in its launching terminal also stops it.
+
+## Install a native login session
+
+From the checkout, as your normal user:
+
+```sh
+./scripts/install-madway --dry-run
+./scripts/install-madway
+```
+
+On Arch/CachyOS, use `./scripts/install-madway --deps` to also install missing
+build/runtime packages through pacman. The installer builds in `build-install`,
+installs under `/usr/local`, and adds a **madway (experimental)** login choice.
+It uses sudo for system installation and preserves personal settings.
+Log out normally, then select madway from the login screen.
+
+For staging, paths, native-session requirements and troubleshooting, read the
+[installation guide](docs/INSTALL.md). Automated checks use virtual outputs and
+staged installations; native DRM/GPU behavior still needs hardware testing.
+
+## Controls
+
+The default modifier is **Alt**. Change it to Super in **Settings → Input**;
+that also changes the move/resize gestures. The table spells out the default
+bindings.
+
+| Shortcut | Action |
+| --- | --- |
+| Alt+Enter | Launch Konsole |
+| Alt+D / Alt+Shift+D | Search applications / run commands or scripts |
+| Alt+Comma | Open settings |
+| Alt+Tab / Alt+Shift+Tab | Cycle window previews; release Alt to select, Escape to cancel |
+| Alt+1…9 | Switch workspace |
+| Alt+Shift+1…9 | Move the focused window to a workspace without following |
+| Alt+T / Alt+Space | Toggle floating/tiling |
+| Alt+F | Toggle application fullscreen |
+| Alt+M | Maximize / restore |
+| Alt+A | Toggle keep above other applications |
+| Alt+Q | Request application close |
+| Alt+L | Lock the screen |
+| Alt+Escape | Exit madway |
+| Ctrl+Shift+Left/Right | Exchange master/stack placement |
+| Ctrl+Shift+Up/Down | Reorder the tiled stack |
+| Alt+left drag | Move a floating window |
+| Alt+right drag | Resize a floating window or shared tile boundaries |
+| Print / Ctrl+Print | Save a full screenshot and copy it to the clipboard |
+| Shift+Print | Select an area, save it and copy it to the clipboard |
+| Volume / brightness keys | Adjust the level and show an indicator |
+
+Click a taskbar/dock entry to minimize the focused window or focus/restore an
+inactive one. The Window menu and Alt+Tab can also restore minimized windows.
+Right-click empty desktop space for file actions and desktop controls; the
+username menu in the panel provides application and session utilities.
+Keyboard screenshot shortcuts keep an open panel menu in the capture.
+
+Floating frames default to 14px titles in compact themes and 22px in Eau.
+Server-decorated tiles use a 1px border without a title bar; fullscreen removes
+madway's borders, gaps and panels on that output. Applications that draw their
+own decorations, toolbars and tabs retain control of them.
+
+Workspaces are shared across outputs. Tiling uses each output's own work area;
+new floating windows prefer the output under the pointer. Removing/disabling
+an output moves its windows to a remaining one. At least one output must stay
+enabled in display settings.
+
+## Settings and appearance
+
+Open **Alt+Comma**. Categories cover Windows, Displays, Appearance, Desktop,
+Input, Keyboard, Mouse & touchpad, Notifications, Audio & brightness, Power,
+Session and Panel. Apply writes
+`${XDG_CONFIG_HOME:-$HOME/.config}/madway/settings.ini` and updates the running
+session. [The default INI](share/madway/settings.ini) documents the available options.
+
+The panel uses your account name by default. Set its label to `@user`, `groxiv`
+or another name in Panel settings. Both panel and dock support all four edges;
+taskbar entries can show only icons or only application names.
+
+Apply the Gershwin presets in Appearance settings or with:
+
+```sh
+./scripts/madway-shell preset gershwin
+# Dark variant:
+./scripts/madway-shell preset gershwin-dark
+```
+
+No wallpaper images or sounds are bundled in the public checkout. A solid
+background works without media. Choose your own wallpaper or slideshow images
+in Appearance and sound files in Audio & brightness. Session sounds are off by
+default. Longhorn assets, the locally imported Gershwin wallpaper and all local
+demoscene payloads are Git-ignored. The optional Demoscenes menu/build integration
+is available when a local package exists; the desktop builds without it.
+
+The audio menu lists output/input devices and active playback/recording streams,
+with volume, mute and default-device controls. Silent applications may have no
+stream to show. In a nested session, audio and brightness controls affect the
+host hardware. The confirmed power-off action shuts down the whole computer.
+
+| Guide | Details |
+| --- | --- |
+| [Desktop files](docs/DESKTOP_FILES.md) | Icons, right-click actions, copy/paste, Trash and drag-and-drop |
+| [Desktop integration](docs/DESKTOP_INTEGRATION.md) | Dock, taskbar, Telegram tray, screenshots and Midnight |
+| [Gershwin / Eau](docs/GERSHWIN.md) | Reference design, theme measurements and asset provenance |
+| [Input and workspaces](docs/INPUT_AND_WORKSPACES.md) | Keyboard, touchpad, tile controls and animations |
+| [Previews and slideshows](docs/PREVIEWS_AND_SLIDESHOWS.md) | Alt+Tab images, slideshow sources, interval and enable/pause |
+| [Power management](docs/POWER.md) | Battery warnings, lid policy, sleep and resume |
+| [Screen locking](docs/LOCKING.md) | swaylock, lock-before-sleep, recovery and limitations |
+| [Scripting](docs/SCRIPTING.md) | Command syntax and startup scripts; [example](examples/workstation.madway) |
+
+## Rendering recovery and diagnostics
+
+Output commits now recover from transient failures without requiring mouse or
+keyboard activity. Failed frames retain their damage and retry per output,
+starting at its refresh period and backing off to at most 250ms. Retries stop
+while outputs are inactive or sleeping. Idle outputs otherwise stay idle.
+This addresses the frame-callback stall seen during fullscreen playback after
+DRM reported `Device or resource busy`; browser/native-driver validation remains
+necessary on affected hardware.
+
+Native session logs are stored at
+`${XDG_STATE_HOME:-$HOME/.local/state}/madway/session.log`, with a runtime-log
+fallback if persistent storage is unavailable. Look for output commit failures
+and `Scene commits recovered` messages. See [installation diagnostics](docs/INSTALL.md)
+for black-screen startup and fullscreen playback troubleshooting.
+
+madway currently supports native Wayland clients. Xwayland, arbitrary keybinding
+editing, clipboard persistence, network settings and a complete portal/polkit
+setup remain future work. Very constrained tile sizes and GPU-specific behavior
+need further compatibility testing.
 
 ## Validation
 
-The desktop smoke test starts a headless compositor on its own Wayland socket
-and private D-Bus session, with a temporary HOME and mock audio/backlight tools.
-It exercises real Mako notifications, swaybg, both Wofi modes with injected
-keyboard input, the GTK settings window, multimedia shortcuts, live configuration
-reload, compact categorized settings/form saves, default floating and Alt/Super
-shortcuts, monitor modes/layout/scale/rotation, hotplug recovery, profile restore
-after restart, and startup/logout/shutdown sound events. It does not change host volume,
-brightness, play audio, or request a shutdown.
+The integration tests use private headless/nested Wayland sockets, temporary
+homes and fixture tools for hardware actions. They do not authenticate against
+the host session or suspend it. Useful checks from the repository root:
 
 ```sh
 cmake --build build
+python3 tests/files.py
 dbus-run-session -- python3 tests/desktop_smoke.py
+dbus-run-session -- python3 tests/desktop_files.py
 dbus-run-session -- python3 tests/nested_pointer_smoke.py
+python3 tests/frame_recovery.py
 python3 tests/installer_smoke.py
 ```
 
-The nested-pointer regression uses a private headless parent and two real
-nested Wayland outputs. It verifies that each host window's pointer maps to its
-own output, that empty-screen clicks do not reach another screen, and that
-clicking, dragging, resizing, and layout reordering work with real Kitty clients.
-It also checks cursor-image reuse on background motion and, when `wl-copy` and
-`wl-paste` are installed, primary-selection transfer between real clients.
-It requires Wayland client development files in addition to the build dependencies.
-
-## Firefox diagnostics
-
-Applications launched inside a madway terminal inherit its `WAYLAND_DISPLAY`.
-For a reproducible Firefox test that does not reuse an existing browser/profile,
-run this from a host terminal, substituting madway's printed socket name:
-
-```sh
-madway_firefox_profile="$(mktemp -d /tmp/madway-firefox.XXXXXX)"
-MOZ_ENABLE_WAYLAND=1 WAYLAND_DISPLAY=wayland-1 firefox --no-remote \
-    --profile "$madway_firefox_profile" about:blank 2>/tmp/madway-firefox.log
-```
-
-This creates a separate temporary profile. The crash reporter indicates that
-Firefox crashed; it does not by itself establish the cause. Keep Firefox's log
-and madway's terminal output when reproducing a crash. Testing covered a fresh
-Firefox window and a context-menu popup; broader browser compatibility still
-needs testing.
+The desktop checks cover actual settings, menus, launchers, notifications,
+clipboard/file operations and drag-and-drop. The nested-pointer test checks two
+real nested outputs with Kitty clients. The frame-recovery test injects failed
+commits into a fullscreen frame-callback client at 60/100Hz, including bounded
+retry backoff and simulated sleep/resume. It does not reproduce a physical GPU
+failure. Additional locking, power, dock, input, preview and slideshow checks are
+listed in their feature guides. Integration fixtures also require Wayland client
+development files and the desktop tools used by the test.
 
 ## Read the implementation
 
-- `src/main.c`: startup, socket creation, outputs, scene rendering, and shutdown.
-- `src/main.h`: server and output state.
-- Every C implementation has a matching header (`view.h`, `input.h`, `window.h`,
-  `decoration.h`, `workspace.h`, `layer.h`, `monitors.h`, and `session.h`). The header declares its public interface;
-  private callbacks remain inside its `.c` file. Headers use forward declarations
-  for peer objects to avoid circular includes. `view.h` owns application state.
-- `src/view.c`: XDG toplevel creation, initial configure, map/unmap, and cleanup.
-- `src/window.c`: move/resize geometry, size constraints, maximize/fullscreen,
-  and restoring the previous geometry.
-- `src/decoration.c`: compact frame geometry, cached Pango/Cairo title buffers,
-  and hit testing for title-bar controls and borders.
-- `src/input.c`: seat capabilities, keyboard/pointer devices, cursor events,
-  hit testing, shortcuts, desktop action dispatch, event forwarding, and input cleanup.
-- `src/workspace.c`: scene visibility, stable master/stack geometry, workspace
-  switching, moving windows between workspaces, and tiled/floating transitions.
-- `src/layer.c`: wallpaper/background, panel, notification and launcher layers,
-  reserved output areas, and keyboard focus for interactive overlays.
-- `src/monitors.c`: output configuration/testing, layout, persistent profiles,
-  and monitor information for settings.
-- `src/session.c`: child process launch, helper lifecycle, settings reload, and
-  nonblocking desktop action messages.
-- `scripts/madway-panel`: multi-output top bars and the shared desktop menu.
-- `scripts/install-madway`: dependency checks and native-session installation.
-- `scripts/madway-shell`: desktop service supervision, hardware controls, sounds,
-  and the GTK settings window. Matching configs and sounds live in `share/madway`.
+Each compositor module has a matching `.h` interface; private callbacks stay in
+its `.c` file.
 
-The application lifecycle is:
+| Source | Responsibility |
+| --- | --- |
+| `src/main.c` | Display/socket startup, outputs, scene rendering, commit recovery and shutdown |
+| `src/view.c`, `src/window.c` | XDG application lifecycle, geometry, fullscreen/maximize and constraints |
+| `src/decoration.c`, `src/eau.c`, `src/theme.c` | Frames, cached titles, Eau chrome and shared theme data |
+| `src/input.c`, `src/devices.c`, `src/drag.c` | Seat/input routing, shortcuts, device preferences and native drags |
+| `src/workspace.c`, `src/monitors.c` | Tiling, workspaces, output layouts and persistent monitor profiles |
+| `src/layer.c`, `src/taskbar.c`, `src/dock.c` | Desktop layers, foreign-toplevel controls and dock visibility |
+| `src/preview.c`, `src/transition.c`, `src/motion.c`, `src/animation.c` | Window previews, workspace/window motion and shared timing |
+| `src/power.c`, `src/lock.c`, `src/session.c` | Sleep/lock state, process supervision and desktop action messages |
+| `scripts/madway-shell`, `scripts/madway-panel` | Settings, services, hardware controls, panel and utility menus |
+| `scripts/madway-desktop`, `scripts/madway_files.py` | Desktop icon surfaces and file operations |
+| `scripts/install-madway` | Dependency checks and native-session installation |
+
+Application rendering follows this lifecycle:
 
 ```text
-connect to socket -> request XDG toplevel -> initial empty commit
-    -> madway sends configure -> client acknowledges and attaches pixels
-    -> map -> scene renders application contents
-    -> unmap/destroy -> listeners and window state are released
+client connects → requests XDG toplevel → initial empty commit
+  → madway configures → client acknowledges and attaches pixels
+  → window maps → output scene renders → frame callback lets client continue
 ```
 
-Input follows a separate path:
-
-```text
-backend device -> keyboard/cursor event -> madway handler
-    -> seat -> focused application surface
-```
-
-The output layout supplies shared display coordinates. Pointer hit testing
-converts those coordinates to coordinates inside an application surface. Mouse
-button drags stay with the surface where the first button was pressed until
-all buttons are released.
+Input follows `backend device → madway handler → seat → focused client surface`.
+The scene and output layout supply shared coordinates for rendering and pointer
+hit testing. Desktop utilities run as separate clients so file operations,
+settings and hardware commands stay outside the compositor's rendering loop.

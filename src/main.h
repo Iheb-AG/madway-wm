@@ -22,6 +22,8 @@
 
 struct madway_view;
 struct madway_layer;
+struct madway_lock;
+struct madway_lock_output;
 
 struct madway_server
 {
@@ -30,6 +32,9 @@ struct madway_server
     struct wlr_renderer *renderer; // Provides operations for drawing images into buffers. A buffer is memory holding pixels
     struct wlr_allocator *allocator; // Allocates pixel buffers that the renderer and backend can use
     struct wlr_scene *scene; // Root of the tree describing everything we display
+    struct wlr_scene_tree *desktop_tree;
+    struct madway_lock *screen_lock;
+    bool locked;
     struct wlr_scene_tree *backgrounds; // Bottom layer, below application windows
     struct wlr_scene_tree *windows; // Application surfaces are drawn above backgrounds
     struct wlr_scene_tree *layer_trees[4];
@@ -38,15 +43,25 @@ struct madway_server
     struct wl_list layers;
     struct madway_layer *keyboard_layer;
     struct madway_config config;
+    char input_error[160];
+    struct madway_transition *workspace_transition;
+    struct madway_motion *window_motion;
+    struct madway_drag *drag;
     unsigned next_view_id, switcher_origin;
     bool switcher_active;
     pid_t session_pid;
     int session_control_fd;
     struct wl_event_source *session_control_event;
     struct wlr_session *session;
+    struct wl_listener session_active;
+    struct wl_listener session_destroy;
+    struct wl_event_source *resume_idle;
+    struct wl_list switches;
+    bool power_initialized, lid_present, lid_closed, sleeping, managing_lid;
     const char *socket_name; // Owned by wl_display; clients connect using WAYLAND_DISPLAY
 
     struct wlr_xdg_shell *xdg_shell;
+    struct wlr_foreign_toplevel_manager_v1 *task_manager;
     struct wl_listener new_toplevel;
     struct wl_listener new_popup;
     struct wlr_xdg_decoration_manager_v1 *decoration_manager;
@@ -104,15 +119,20 @@ struct madway_output
     struct wlr_output *output;
     struct wlr_scene_output *scene_output; // The part of the scene displayed by this output
     struct wlr_scene_rect *background; // Persistent black rectangle for this output
+    struct madway_lock_output *lock_data;
     struct wlr_box usable_area;
     int layout_x, layout_y;
     bool positioned;
+    bool lid_disabled;
     int master_percent; // Zero uses the configured default; drags override this output.
     struct wl_list link;
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
     bool first_frame_drawn;
+    struct wl_event_source *frame_retry;
+    unsigned failed_frames;
+    bool frame_retry_pending;
 };
 
 

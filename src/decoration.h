@@ -7,7 +7,7 @@
 #define MADWAY_TITLE_HEIGHT 14
 #define MADWAY_BORDER 1
 
-enum madway_frame_part { MADWAY_FRAME_NONE, MADWAY_FRAME_TITLE, MADWAY_FRAME_CLOSE, MADWAY_FRAME_MAXIMIZE };
+enum madway_frame_part { MADWAY_FRAME_NONE, MADWAY_FRAME_TITLE, MADWAY_FRAME_CLOSE, MADWAY_FRAME_MAXIMIZE, MADWAY_FRAME_MINIMIZE };
 struct madway_view;
 
 bool madway_frame_create(struct madway_view *view);

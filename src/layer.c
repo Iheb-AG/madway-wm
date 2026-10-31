@@ -1,25 +1,25 @@
 #include "layer.h"
+#include "dock.h"
 #include "main.h"
 #include "view.h"
 #include "input.h"
 #include "workspace.h"
+#include "lock.h"
+#include "session.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/util/log.h>
 
 void madway_layer_focus(struct madway_layer *layer)
 {
     struct madway_server *server = layer->server;
+    if(server->locked){madway_lock_focus(server,NULL);return;}
     if (!layer->mapped || !layer->surface->output->enabled || layer->surface->current.keyboard_interactive ==
             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) return;
     server->keyboard_layer = layer;
-    struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
-    struct wlr_keyboard_modifiers modifiers = {0};
-    wlr_seat_keyboard_notify_enter(server->seat, layer->surface->surface,
-            keyboard != NULL ? keyboard->keycodes : NULL,
-            keyboard != NULL ? keyboard->num_keycodes : 0,
-            keyboard != NULL ? &keyboard->modifiers : &modifiers);
+    madway_keyboard_enter(server,layer->surface->surface);
 }
 
 static void restore_focus(struct madway_server *server)
@@ -35,9 +35,10 @@ static void restore_focus(struct madway_server *server)
     else madway_workspace_focus(server);
 }
 
-void madway_arrange_layers(struct madway_server *server)
+bool madway_arrange_layers(struct madway_server *server)
 {
-    if (server->shutting_down) return;
+    if (server->shutting_down) return false;
+    bool changed=false;
     struct madway_layer *entry;
     wl_list_for_each(entry, &server->layers, link)
         wlr_scene_node_set_enabled(&entry->tree->node, entry->mapped && entry->surface->output->enabled);
@@ -68,11 +69,23 @@ void madway_arrange_layers(struct madway_server *server)
                     wlr_scene_node_reparent(&layer->tree->node, server->layer_trees[index]);
                     struct wlr_box proposed = usable;
                     wlr_scene_layer_surface_v1_configure(layer->scene_layer, &full, &proposed);
-                    if (layer->mapped || surface->initial_commit) usable = proposed;
+                    bool dock_hidden=strcmp(surface->namespace,"madway-dock")==0 && madway_dock_autohidden(server,output->output);
+                    if ((layer->mapped || surface->initial_commit) && !dock_hidden) usable = proposed;
                 }
             }
+        changed |= !wlr_box_equal(&output->usable_area,&usable);
         output->usable_area = usable;
     }
+    wl_list_for_each(entry,&server->layers,link) madway_dock_update(entry);
+    return changed;
+}
+
+static void relayout(struct madway_server *server)
+{
+    // Menus, notifications and redraws do not change the window layout. In
+    // particular, unmapping the workspace menu must not cancel its own slide.
+    if (madway_arrange_layers(server)) madway_workspace_arrange(server);
+    else madway_session_publish_state(server);
 }
 
 static void handle_layer_commit(struct wl_listener *listener, void *data)
@@ -81,8 +94,7 @@ static void handle_layer_commit(struct wl_listener *listener, void *data)
     struct madway_layer *layer = wl_container_of(listener, layer, commit);
     if (layer->surface->initial_commit || layer->surface->current.committed != 0)
     {
-        madway_arrange_layers(layer->server);
-        madway_workspace_arrange(layer->server);
+        relayout(layer->server);
         if (layer->server->keyboard_layer == layer &&
             layer->surface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE)
         {
@@ -102,8 +114,7 @@ static void handle_layer_map(struct wl_listener *listener, void *data)
     struct madway_layer *layer = wl_container_of(listener, layer, map);
     layer->mapped = true;
     wlr_scene_node_set_enabled(&layer->tree->node, true);
-    madway_arrange_layers(layer->server);
-    madway_workspace_arrange(layer->server);
+    relayout(layer->server);
     if (layer->surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP &&
         layer->surface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
         madway_layer_focus(layer);
@@ -116,14 +127,14 @@ static void handle_layer_unmap(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_layer *layer = wl_container_of(listener, layer, unmap);
     layer->mapped = false;
+    madway_dock_finish(layer);
     wlr_scene_node_set_enabled(&layer->tree->node, false);
     if (layer->server->keyboard_layer == layer)
     {
         layer->server->keyboard_layer = NULL;
         restore_focus(layer->server);
     }
-    madway_arrange_layers(layer->server);
-    madway_workspace_arrange(layer->server);
+    relayout(layer->server);
 }
 
 static void handle_layer_destroy(struct wl_listener *listener, void *data)
@@ -132,6 +143,7 @@ static void handle_layer_destroy(struct wl_listener *listener, void *data)
     struct madway_layer *layer = wl_container_of(listener, layer, destroy);
     struct madway_server *server = layer->server;
     layer->mapped = false;
+    madway_dock_finish(layer);
     if (server->keyboard_layer == layer) { server->keyboard_layer = NULL; restore_focus(server); }
     wl_list_remove(&layer->commit.link);
     wl_list_remove(&layer->map.link);
@@ -141,8 +153,7 @@ static void handle_layer_destroy(struct wl_listener *listener, void *data)
     wl_list_remove(&layer->link);
     wlr_scene_node_destroy(&layer->tree->node);
     free(layer);
-    madway_arrange_layers(server);
-    madway_workspace_arrange(server);
+    relayout(server);
 }
 
 static void handle_layer_popup(struct wl_listener *listener, void *data)
@@ -196,7 +207,7 @@ bool madway_init_layers(struct madway_server *server)
     wl_signal_add(&server->layer_shell->events.new_surface, &server->new_layer);
     for (int i = 0; i < 4; ++i)
     {
-        server->layer_trees[i] = wlr_scene_tree_create(&server->scene->tree);
+        server->layer_trees[i] = wlr_scene_tree_create(server->desktop_tree);
         if (server->layer_trees[i] == NULL) return false;
         if (i < 2) wlr_scene_node_place_below(&server->layer_trees[i]->node, &server->windows->node);
     }
