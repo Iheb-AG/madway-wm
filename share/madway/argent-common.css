@@ -1,4 +1,4 @@
-/* Eau measurements and color stops are documented in docs/GERSHWIN.md. */
+/* Coordinated Argent desktop controls; see docs/THEMES.md. */
 * { font-family: Inter, sans-serif; font-size: 13px; }
 window { background-color: #ededed; color: #0d0d0d; }
 label { color: #0d0d0d; }

@@ -16,6 +16,11 @@ struct madway_layer
     struct wl_list link;
     struct wl_listener commit, map, unmap, destroy, new_popup;
     bool mapped;
+    bool effect_active;
+    float effect_opacity;
+    double effect_started;
+    struct wlr_buffer *effect_cache;
+    int effect_width,effect_height;
     struct madway_dock *dock;
 };
 

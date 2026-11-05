@@ -10,6 +10,7 @@
 #include "taskbar.h"
 #include "preview.h"
 #include "motion.h"
+#include "closing.h"
 #include <string.h>
 #include <glib.h>
 
@@ -22,7 +23,8 @@ void madway_focus_view(struct madway_server *server, struct madway_view *view)
 {
     if(server->locked){if(view==NULL)server->focused_view=NULL;madway_lock_focus(server,NULL);return;}
     madway_motion_focus(server,view);
-    if (view != NULL && view->mapped && view->minimized && view->workspace == server->active_workspace) {
+    if(view && view->output && view->workspace==view->output->workspace)madway_workspace_activate_output(server,view->output);
+    if (view != NULL && view->mapped && view->minimized && view->output && view->workspace==view->output->workspace) {
         madway_set_minimized(view,false);
         return;
     }
@@ -43,6 +45,7 @@ void madway_focus_view(struct madway_server *server, struct madway_view *view)
     }
     struct madway_view *previous = server->focused_view;
     server->focused_view = view;
+    if(view && view->output)view->output->workspace_focus[view->workspace]=view->id;
     madway_session_publish_state(server);
     if (previous != NULL) madway_frame_update(previous);
     if (view == NULL)
@@ -139,6 +142,7 @@ static void handle_view_map(struct wl_listener *listener, void *data)
         wl_list_for_each(output, &view->server->outputs, link)
             if (output->output->enabled) { view->output = output; break; }
     int x = view->output != NULL ? view->output->usable_area.x + offset : offset;
+    if(view->output)view->workspace=view->output->workspace;
     int y = view->output != NULL ? view->output->usable_area.y + offset : offset;
     if (!view->maximized && !view->fullscreen)
         wlr_scene_node_set_position(&view->scene_tree->node, x, y);
@@ -186,6 +190,8 @@ static void handle_view_map(struct wl_listener *listener, void *data)
     madway_workspace_arrange(view->server);
     if (madway_view_visible(view) && !view->desktop_overlay) madway_focus_view(view->server, view);
     madway_rebase_cursor(view->server);
+    if (g_strcmp0(view->toplevel->app_id,"org.madway.Settings")==0)
+        madway_motion_open(view);
     wlr_log(WLR_INFO, "Window mapped: %s", view->toplevel->title != NULL
             ? view->toplevel->title : "(untitled)");
 }
@@ -194,6 +200,7 @@ static void handle_view_unmap(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_view *view = wl_container_of(listener, view, unmap);
+    madway_close_begin(view);
     madway_motion_finish(view->server);
     view->mapped = false;
     madway_preview_remove(view);
@@ -352,7 +359,9 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data)
     view->map.notify = handle_view_map;
     wl_signal_add(&toplevel->base->surface->events.map, &view->map);
     view->unmap.notify = handle_view_unmap;
-    wl_signal_add(&toplevel->base->surface->events.unmap, &view->unmap);
+    // Capture before wlroots' scene listener disables the last valid buffers.
+    // wlroots 0.20 emits unmap before replacing/releasing the surface state.
+    wl_list_insert(&toplevel->base->surface->events.unmap.listener_list,&view->unmap.link);
     view->destroy.notify = handle_view_destroy;
     wl_signal_add(&toplevel->events.destroy, &view->destroy);
     view->request_maximize.notify = handle_view_request_maximize;

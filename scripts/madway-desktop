@@ -21,6 +21,7 @@ TARGETS=[Gtk.TargetEntry.new('text/uri-list',0,0)]
 class Desktop:
     def __init__(self):
         self.config=api['settings']();self.directory=files['desktop_directory'](self.config)
+        api['icon_theme'](self.config)
         size=min(64,max(24,self.config.getint('desktop','icon_size')))
         self.icon_enum=Gtk.icon_size_register('madway-desktop-size',size,size)
         self.display=Gdk.Display.get_default();self.windows=[];self.timer=0;self.busy=False;self.alive=True
@@ -38,12 +39,13 @@ class Desktop:
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT,signal.SIGINT,self.close)
 
     def style(self):
-        palette=api['themes']()[self.config.get('appearance','theme')]
+        palette=api['palette'](self.config)
         controls=(api['SHARE']/'settings.css').read_text()
         for key,value in palette.items():controls=controls.replace('@'+key+'@',value)
+        controls=controls.replace('@selection_text@',api['contrast_text'](palette['active']))
         return api['theme_style']('window { background: #080808; color: #c8c8c8; }',self.config)+controls+'''
         window.desktop-icons, window.desktop-icons decoration, .desktop-icons scrolledwindow, .desktop-icons viewport, .desktop-icons iconview { background: transparent; border: 0; box-shadow: none; }
-        .desktop-icons iconview { color: white; font-size: 12px; text-shadow: 0 1px 2px black, 1px 0 2px black; }
+        .desktop-icons iconview { color: white; font-size: '''+str(min(20,max(9,self.config.getint('desktop','text_size'))))+'''px; text-shadow: 0 1px 2px black, 1px 0 2px black; }
         .desktop-icons iconview:selected { background: '''+palette['active']+'''; border-radius: 1px; }
         menu { background: '''+palette['surface']+'''; color: '''+palette['text']+'''; border: 1px solid '''+palette['border']+'''; padding: 2px; border-radius: 0; box-shadow: none; }
         menuitem { padding: 3px 10px; border-radius: 0; }
@@ -107,10 +109,20 @@ class Desktop:
             renderer=Gtk.CellRendererPixbuf();renderer.set_property('stock-size',self.icon_enum)
             size=self.config.getint('desktop','icon_size');renderer.set_fixed_size(size,size)
             view.pack_start(renderer,False);view.add_attribute(renderer,'gicon',0)
-            view.set_text_column(1)
+            labels=self.config.getboolean('desktop','labels')
+            if labels:view.set_text_column(1)
+            cell_width=min(160,max(64,self.config.getint('desktop','cell_width')))
+            # A filename must never stretch its entire row or move icon centers.
+            for cell in view.get_cells():
+                if isinstance(cell,Gtk.CellRendererText):
+                    cell.set_property('wrap-width',cell_width);cell.set_property('wrap-mode',2)
+                    cell.set_property('ellipsize',3);cell.set_property('alignment',1)
+                    cell.set_fixed_size(cell_width,max(34,self.config.getint('desktop','text_size')*3))
             view.set_tooltip_column(2)
-            view.set_item_width(92);view.set_column_spacing(8);view.set_row_spacing(8);view.set_margin(12)
-            view.set_item_padding(4);view.set_activate_on_single_click(False)
+            view.set_item_width(cell_width)
+            spacing=min(32,max(0,self.config.getint('desktop','spacing')))
+            view.set_column_spacing(spacing);view.set_row_spacing(spacing);view.set_margin(min(48,max(0,self.config.getint('desktop','margin'))))
+            view.set_item_padding(4);view.set_activate_on_single_click(self.config.getboolean('desktop','single_click'))
             view.connect('item-activated',lambda widget,path:self.open([Path(widget.get_model()[path][2])]))
             view.connect('button-press-event',self.pressed);view.connect('key-press-event',self.key)
             view.enable_model_drag_source(Gdk.ModifierType.BUTTON1_MASK,TARGETS,Gdk.DragAction.COPY|Gdk.DragAction.MOVE)

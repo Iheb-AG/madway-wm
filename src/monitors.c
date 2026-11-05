@@ -1,11 +1,13 @@
 #include "monitors.h"
 #include "main.h"
+#include "closing.h"
 #include "view.h"
 #include "input.h"
 #include "workspace.h"
 #include "layer.h"
 #include "power.h"
 #include "lock.h"
+#include "transition.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <math.h>
@@ -76,6 +78,8 @@ void madway_publish_outputs(struct madway_server *server)
 
 void madway_arrange_outputs(struct madway_server *server)
 {
+    madway_close_cancel(server,NULL);
+    madway_transition_finish(server);
     if (server->shutting_down) return;
     madway_power_lid_outputs(server);
     struct madway_output *output;

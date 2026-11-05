@@ -3,6 +3,9 @@
 #include "view.h"
 #include "window.h"
 #include "workspace.h"
+#include "session.h"
+#include "animation.h"
+#include <stdio.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 
 static void activate(struct wl_listener *listener, void *data)
@@ -10,7 +13,13 @@ static void activate(struct wl_listener *listener, void *data)
     struct madway_view *view = wl_container_of(listener, view, task_activate);
     struct wlr_foreign_toplevel_handle_v1_activated_event *event = data;
     if (view->server->locked || event->seat != view->server->seat || !view->mapped) return;
-    madway_workspace_switch(view->server, view->workspace);
+    struct madway_server *server=view->server;
+    if(server->dock_context_until>=madway_animation_now()) {
+        server->dock_context_until=0;
+        char action[128];snprintf(action,sizeof(action),"application-menu %u %d %d",view->id,server->dock_context_x,server->dock_context_y);
+        madway_session_action(server,action);return;
+    }
+    madway_workspace_switch_output(view->server,view->output,view->workspace);
     madway_focus_view(view->server, view);
 }
 
@@ -83,7 +92,7 @@ void madway_taskbar_sync(struct madway_server *server)
         wlr_foreign_toplevel_handle_v1_set_maximized(view->task, view->maximized);
         wlr_foreign_toplevel_handle_v1_set_fullscreen(view->task, view->fullscreen);
         wlr_foreign_toplevel_handle_v1_set_activated(view->task, server->focused_view == view && madway_view_visible(view));
-        struct wlr_output *target = view->output && view->output->output->enabled ? view->output->output : NULL;
+        struct wlr_output *target = view->output && view->output->output->enabled && view->workspace==view->output->workspace ? view->output->output : NULL;
         struct wlr_foreign_toplevel_handle_v1_output *output, *temporary;
         wl_list_for_each_safe(output, temporary, &view->task->outputs, link)
             if (output->output != target) wlr_foreign_toplevel_handle_v1_output_leave(view->task, output->output);

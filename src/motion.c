@@ -162,7 +162,7 @@ void madway_motion_prepare(struct madway_view *view)
     }
     madway_transition_finish(server); // Also settles a previous window animation.
     if (!server->config.window_animate || !view->mapped || view->desktop_overlay || view->fullscreen ||
-            !view->output || !view->output->output->enabled || view->workspace!=server->active_workspace ||
+            !view->output || !view->output->output->enabled || view->workspace!=view->output->workspace ||
             server->locked || server->sleeping || server->shutting_down || (server->session && !server->session->active) ||
             (!view->scene_tree->node.enabled && !view->minimized)) {
         if (retained) wlr_buffer_unlock(retained);
@@ -200,4 +200,17 @@ void madway_motion_start(struct madway_view *view,bool minimizing,bool restoring
     wlr_scene_node_set_enabled(&view->scene_tree->node,false);
     wlr_scene_node_set_enabled(&motion->tree->node,true);
     wlr_output_schedule_frame(view->output->output);
+}
+
+void madway_motion_open(struct madway_view *view)
+{
+    madway_motion_prepare(view);
+    struct madway_motion *motion=view->server->window_motion;
+    if (!motion || motion->view!=view) return;
+    int dx=(int)lround(motion->from.width*.02),dy=(int)lround(motion->from.height*.02);
+    motion->from.x+=dx;motion->from.y+=dy+6;
+    motion->from.width-=2*dx;motion->from.height-=2*dy;
+    motion->opacity_from=0;
+    madway_motion_start(view,false,false);
+    if (view->server->window_motion) view->server->window_motion->restoring=true;
 }

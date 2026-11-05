@@ -26,15 +26,10 @@ def inspect_settings():
         assert not window.get_decorated(), "Settings must request the compositor's compact frame"
         stack = next(widget for widget in children(window) if isinstance(widget, Gtk.Stack))
         names = {stack.child_get_property(page, "name") for page in stack.get_children()}
-        assert names == {"Windows", "Displays", "Appearance", "Desktop", "Input", "Keyboard", "Mouse & touchpad", "Notifications", "Audio & brightness", "Power", "Session", "Panel"}, names
+        assert names == set(module["SETTINGS_PAGES"]), names
         grids=[widget for widget in children(stack) if isinstance(widget,Gtk.Grid)]
-        assert all(grid.get_row_spacing()==7 for grid in grids if grid.get_parent().get_parent() in stack.get_children())
-        sidebar=next(widget for widget in children(window) if isinstance(widget,Gtk.StackSidebar))
-        rows=[widget for widget in children(sidebar) if isinstance(widget,Gtk.ListBoxRow)]
-        assert rows
-        for row in rows:
-            border=row.get_style_context().get_border(Gtk.StateFlags.NORMAL)
-            assert not any((border.top,border.bottom,border.right)) and border.left==2, 'Unexpected category frame'
+        assert all(grid.get_row_spacing()==9 for grid in grids if grid.get_parent().get_parent() in stack.get_children())
+        assert window.settings_browser.list.get_children()
         for name in names:
             stack.set_visible_child_name(name)
             assert stack.get_visible_child_name() == name
@@ -48,8 +43,8 @@ def inspect_settings():
             raise AssertionError("Missing setting: " + label)
 
         control("Appearance", "Theme profile").set_active_id("amber")
-        control("Appearance", "Background").set_active_id("color")
-        control("Appearance", "Background color").set_text("#101012")
+        control("Wallpaper", "Background").set_active_id("color")
+        control("Wallpaper", "Background color").set_text("#101012")
         control("Input", "Focus on hover").set_active(True)
         edges=control("Panel", "Screen edge")
         assert [row[1] for row in edges.get_model()]==["top","bottom","left","right"]
@@ -66,12 +61,23 @@ def inspect_settings():
         assert tasks.get_active_id()=='icons';tasks.set_active_id('names')
         assert control('Mouse & touchpad','Tap to click').get_active()
         control('Mouse & touchpad','Tap dragging').set_active(False)
+        assert control('Mouse & touchpad','Three-finger workspace swipe').get_active()
+        control('Mouse & touchpad','Three-finger workspace swipe').set_active(False)
+        control('Mouse & touchpad','Reverse workspace swipe').set_active(True)
+        control('Mouse & touchpad','Swipe distance').set_value(180)
+        assert not control('Mouse & touchpad','Reverse workspace swipe').get_sensitive()
+        assert not control('Mouse & touchpad','Swipe distance').get_sensitive()
+        control('Mouse & touchpad','Three-finger workspace swipe').set_active(True)
+        assert 'left: previous; right: next' in control('Mouse & touchpad','Gestures').get_text()
+        control('Mouse & touchpad','Three-finger workspace swipe').set_active(False)
         control('Mouse & touchpad','Touchpad: natural scrolling').set_active(True)
         control('Mouse & touchpad','Touchpad speed').set_value(.35)
         control('Mouse & touchpad','Left-handed buttons').set_active(True)
         assert control('Keyboard','Layout (XKB)').get_text()==''
         assert control('Audio & brightness','Output volume').get_value_pos()==Gtk.PositionType.RIGHT
-        assert control('Appearance','Animate maximize / minimize').get_active()
+        assert control('Animations','Animate maximize / minimize').get_active()
+        assert control('Animations','Animate closing windows').get_active()
+        control('Animations','Close animation (ms)').set_value(300)
         control("Windows", "New windows").set_active_id("tiled")
         combo=control('Windows','New windows')
         border=combo.get_style_context().get_border(Gtk.StateFlags.NORMAL)
@@ -109,6 +115,8 @@ def inspect_settings():
         assert config.get('panel','tasks')=='names'
         assert config.getboolean('touchpad','tap') and not config.getboolean('touchpad','tap_drag')
         assert config.getboolean('touchpad','natural_scroll') and abs(config.getfloat('touchpad','speed')-.35)<.01
+        assert not config.getboolean('touchpad','workspace_swipe') and config.getboolean('touchpad','swipe_invert')
+        assert config.getint('touchpad','swipe_threshold')==180
         assert config.getboolean('mouse','left_handed')
         assert config.get("windows", "default_mode") == "tiled"
         assert config.getint("windows", "master_percent") == 60
@@ -117,6 +125,38 @@ def inspect_settings():
         assert config.getint("notifications", "width") == 360
         assert config.getint("notifications", "timeout") == 2500
         assert config.getint("controls", "volume_step") == 7
+        assert config.getboolean('windows','close_animate') and config.getint('windows','close_ms')==300
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        confirmation=module['session_confirmation'];sent=[]
+        with patch.dict(confirmation.__globals__,action=lambda name:sent.append(name)):
+            for operation in ('poweroff','reboot'):
+                for response in (Gtk.ResponseType.CANCEL,Gtk.ResponseType.DELETE_EVENT,Gtk.ResponseType.ACCEPT):
+                    before=len(sent)
+                    def respond(response=response):
+                        dialog=next(widget for widget in Gtk.Window.list_toplevels() if widget.get_title()=='madway — Session')
+                        assert dialog.get_focus().get_label()=='Cancel'
+                        if response==Gtk.ResponseType.ACCEPT:
+                            next(widget for widget in children(dialog) if isinstance(widget,Gtk.Button) and widget.get_label()!='Cancel').clicked()
+                        else:dialog.destroy()
+                        return False
+                    GLib.timeout_add(60,respond);confirmation(operation,window)
+                    assert len(sent)==before+(response==Gtk.ResponseType.ACCEPT)
+                    if response==Gtk.ResponseType.ACCEPT:assert sent[-1]==operation
+        calls=[];sounds=[];spawned=[]
+        desktop=SimpleNamespace(sound=lambda *args,**kwargs:sounds.append(args),shutdown_played=False,
+            spawn=lambda key,args:spawned.append((key,args)))
+        perform=module['Desktop'].perform
+        with patch.dict(perform.__globals__,run=lambda args:calls.append(args)):
+            for operation in ('poweroff','reboot'):
+                perform(desktop,{'action':'session-confirm','operation':operation})
+                assert spawned[-1][1][-2:]==['confirm-session',operation] and not calls
+            for operation in ('poweroff','reboot'):
+                desktop.session_exit=SimpleNamespace(begin=lambda op:module['Desktop'].finish_session_operation(desktop,op))
+                perform(desktop,{'action':operation})
+                assert calls[-1]==['systemctl',operation] and desktop.shutdown_played
+        assert not sounds,'Power commit must not replay synchronized audio'
+        print('SESSION CONFIRMATION CANCEL DEFAULT AND MOCKED POWER ACTIONS PASS',flush=True)
         print("SETTINGS CATEGORIES AND FORM SAVE PASS", flush=True)
     except BaseException as error:
         errors.append(error)

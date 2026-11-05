@@ -1,4 +1,4 @@
-/* Private compositor fixture: exercise Eau title controls using virtual input. */
+/* Private compositor fixture: exercise Argent title controls using virtual input. */
 #define _GNU_SOURCE
 #include "main.h"
 #include "view.h"
@@ -18,8 +18,8 @@ static struct wlr_keyboard keyboard;
 static struct wl_listener destroy;
 static struct wl_event_source *timer;
 static int stage, delay;
-static const struct wlr_pointer_impl pointer_impl = {.name="eau-test-pointer"};
-static const struct wlr_keyboard_impl keyboard_impl = {.name="eau-test-keyboard"};
+static const struct wlr_pointer_impl pointer_impl = {.name="argent-test-pointer"};
+static const struct wlr_keyboard_impl keyboard_impl = {.name="argent-test-keyboard"};
 
 static void motion(double x, double y)
 {
@@ -43,13 +43,13 @@ static void key(uint32_t code, enum wl_keyboard_key_state state)
 static int tick(void *unused)
 {
     (void)unused;
-    const char *go=getenv("MADWAY_EAU_TEST_GO");
+    const char *go=getenv("MADWAY_ARGENT_TEST_GO");
     if (!go || access(go,F_OK)!=0) goto again;
     struct madway_view *view=NULL,*entry;
     wl_list_for_each(entry,&server->views,link)
-        if(entry->mapped && entry->toplevel->title && !strcmp(entry->toplevel->title,"eau-client"))view=entry;
+        if(entry->mapped && entry->toplevel->title && !strcmp(entry->toplevel->title,"argent-client"))view=entry;
     if (!view && stage==6) {
-        fprintf(stderr,"EAU TRANSPARENT CORNERS GRADIENT HOVER MINIMIZE ALTTAB MAXIMIZE AND CLOSE PASS\n");stage++;
+        fprintf(stderr,"ARGENT TRANSPARENT CORNERS GRADIENT HOVER MINIMIZE ALTTAB MAXIMIZE AND CLOSE PASS\n");stage++;
     }
     if (!view) goto again;
     int width=view->toplevel->base->geometry.width;
@@ -57,7 +57,7 @@ static int tick(void *unused)
     if (++delay<4) goto again;
     delay=0;
     if(stage==0) {
-        assert(server->config.eau && view->frame_title_height==22);
+        assert(server->config.argent && view->frame_title_height==22);
         assert(view->shadow_tree->node.enabled && view->shadows[0] != NULL);
         double sx=0,sy=0;
         assert(!view->shadows[0]->point_accepts_input(view->shadows[0],&sx,&sy));
@@ -102,8 +102,8 @@ bool wlr_backend_start(struct wlr_backend *backend)
     struct wl_listener *listener=wl_container_of(backend->events.new_input.listener_list.next,listener,link);
     server=wl_container_of(listener,server,new_input);
     if(!real(backend))return false;
-    wlr_pointer_init(&pointer,&pointer_impl,"eau-test-pointer");
-    wlr_keyboard_init(&keyboard,&keyboard_impl,"eau-test-keyboard");
+    wlr_pointer_init(&pointer,&pointer_impl,"argent-test-pointer");
+    wlr_keyboard_init(&keyboard,&keyboard_impl,"argent-test-keyboard");
     wl_signal_emit_mutable(&backend->events.new_input,&pointer.base);
     wl_signal_emit_mutable(&backend->events.new_input,&keyboard.base);
     destroy.notify=finish;wl_signal_add(&backend->events.destroy,&destroy);

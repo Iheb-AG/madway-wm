@@ -25,16 +25,24 @@ with tempfile.TemporaryDirectory(prefix='madway-installer-test-') as tmp:
     assert (binaries/'madway_lock.py').is_file()
     assert (binaries/'madway_wallpaper.py').is_file()
     assert (binaries/'madway_files.py').is_file()
+    assert (binaries/'madway_sound.py').is_file() and (binaries/'madway_apps.py').is_file()
+    assert (binaries/'madway_settings.py').is_file()
+    for name in ('madway_exit.py','madway_exit_ui.py','madway_gl.py'):assert (binaries/name).is_file()
+    for name in ('session.vert','crt.frag','iris.frag','dissolve.frag'):assert (data_dir/'shaders'/name).is_file()
+    assert (binaries/'madway_system.py').is_file() and (binaries/'madway_widgets.py').is_file()
+    assert (binaries/'madway_spotlight.py').is_file() and (binaries/'madway_media.py').is_file()
+    for stylesheet in ('wofi.css','switcher.css','osd.css','audio.css','utilities.css'):
+        assert (data_dir/stylesheet).is_file()
     assert (data_dir/'settings.css').is_file()
-    assert (data_dir/'eau-common.css').is_file() and (data_dir/'eau-panel.css').is_file()
+    assert (data_dir/'argent-common.css').is_file() and (data_dir/'argent-panel.css').is_file()
     local_wallpaper=repo/'share/madway/wallpapers/Abstract Blue.png'
     if local_wallpaper.is_file():
         assert (data_dir/'wallpapers/Abstract Blue.png').read_bytes()==local_wallpaper.read_bytes()
     preset_env={**os.environ,'XDG_CONFIG_HOME':str(root/'preset-config'),'XDG_RUNTIME_DIR':str(root/'preset-runtime')}
-    subprocess.run([str(binaries/'madway-shell'),'preset','gershwin'],env=preset_env,check=True,stdout=subprocess.DEVNULL)
+    subprocess.run([str(binaries/'madway-shell'),'preset','argent'],env=preset_env,check=True,stdout=subprocess.DEVNULL)
     import configparser
     preset=configparser.ConfigParser(interpolation=None);preset.read(root/'preset-config/madway/settings.ini')
-    assert preset.get('appearance','theme')=='gershwin'
+    assert preset.get('appearance','theme')=='argent'
     assert preset.get('wallpaper','path')==(str(data_dir/'wallpapers/Abstract Blue.png') if local_wallpaper.is_file() else '')
     assert 'Exec=/usr/local/bin/madway-session --native' in entry.read_text()
     assert not any(path.suffix in ('.ogg','.mp3','.wav','.jpg','.flp') for path in stage.rglob('*'))

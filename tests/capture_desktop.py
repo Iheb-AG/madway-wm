@@ -89,7 +89,7 @@ else:raise SystemExit('Capture audio is read-only')
             endpoint=str(runtime/('madway-'+env['WAYLAND_DISPLAY'])/'control.sock')
             channel.sendto(json.dumps({'action':'close-menu'}).encode(),endpoint)
             channel.sendto(json.dumps({'action':'launcher'}).encode(),endpoint)
-        wait(lambda:'Desktop layer mapped: wofi' in server_text())
+        wait(lambda:'Desktop layer mapped: madway-launcher' in server_text())
         time.sleep(.5)
         subprocess.run(['grim','-o','HEADLESS-1',str(target/'launcher.png')],env=env,check=True,timeout=8)
         with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as channel:

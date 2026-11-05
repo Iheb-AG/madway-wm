@@ -20,9 +20,10 @@ with tempfile.TemporaryDirectory(prefix='madway-input-workspaces-') as tmp:
     root=Path(tmp);runtime=root/'runtime';runtime.mkdir(mode=0o700)
     config=root/'config';(config/'madway').mkdir(parents=True)
     ini=config/'madway/settings.ini'
-    ini.write_text('[appearance]\ntheme=gershwin-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[workspaces]\nanimation_ms=500\n[wallpaper]\ntype=color\ncolor=#142034\n[output:HEADLESS-1]\nmode=1280x720@60000\nx=0\ny=0\n[output:HEADLESS-2]\nmode=800x600@60000\nx=1280\ny=0\n')
+    ini.write_text('[appearance]\ntheme=argent-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[workspaces]\nanimation_ms=500\n[wallpaper]\ntype=color\ncolor=#142034\n[output:HEADLESS-1]\nmode=1280x720@60000\nx=0\ny=0\n[output:HEADLESS-2]\nmode=800x600@60000\nx=1280\ny=0\n')
     if os.environ.get('MADWAY_TEST_REFRESH'):
         ini.write_text(ini.read_text().replace('1280x720@60000','1280x720@'+os.environ['MADWAY_TEST_REFRESH']))
+    with ini.open('a') as out:out.write('\n[session_effects]\nopening=false\n')
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wlroots-0.20','wayland-server','xkbcommon','libinput'],text=True).split()
     subprocess.run(['cc','-Wall','-Wextra','-Werror','-DWLR_USE_UNSTABLE','-Isrc','tests/device_settings.c','src/devices.c','-o',str(root/'device-settings'),*flags],check=True)
     subprocess.run([str(root/'device-settings')],check=True)

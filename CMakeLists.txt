@@ -23,6 +23,11 @@ add_custom_command(OUTPUT "${LAYER_HEADER}"
     COMMAND "${WAYLAND_SCANNER}" server-header
         "${CMAKE_CURRENT_SOURCE_DIR}/protocols/wlr-layer-shell-unstable-v1.xml" "${LAYER_HEADER}"
     DEPENDS protocols/wlr-layer-shell-unstable-v1.xml VERBATIM)
+set(GESTURES_HEADER "${CMAKE_CURRENT_BINARY_DIR}/protocols/pointer-gestures-unstable-v1-protocol.h")
+add_custom_command(OUTPUT "${GESTURES_HEADER}"
+    COMMAND "${WAYLAND_SCANNER}" server-header
+        "${CMAKE_CURRENT_SOURCE_DIR}/protocols/pointer-gestures-unstable-v1.xml" "${GESTURES_HEADER}"
+    DEPENDS protocols/pointer-gestures-unstable-v1.xml VERBATIM)
 
 add_executable(madway
     src/main.c
@@ -33,8 +38,8 @@ add_executable(madway
     src/input.h
     src/decoration.c
     src/decoration.h
-    src/eau.c
-    src/eau.h
+    src/argent.c
+    src/argent.h
     src/window.c
     src/window.h
     src/workspace.c
@@ -55,12 +60,18 @@ add_executable(madway
     src/preview.h
     src/devices.c
     src/devices.h
+    src/gestures.c
+    src/gestures.h
     src/transition.c
     src/transition.h
     src/motion.c
     src/motion.h
     src/animation.c
     src/animation.h
+    src/effects.c
+    src/effects.h
+    src/closing.c
+    src/closing.h
     src/drag.c
     src/drag.h
     src/power.c
@@ -68,6 +79,7 @@ add_executable(madway
     src/lock.c
     src/lock.h
     "${LAYER_HEADER}"
+    "${GESTURES_HEADER}"
 )
 target_compile_definitions(madway PRIVATE WLR_USE_UNSTABLE)
 target_compile_definitions(madway PRIVATE MADWAY_VERSION="${MADWAY_RELEASE_VERSION}")
@@ -95,7 +107,7 @@ target_include_directories(madway PRIVATE
 
 install(TARGETS madway RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS scripts/madway-session scripts/madway-shell scripts/madway-panel scripts/madway-script scripts/madway-terminal scripts/madway-screenshot scripts/madway-desktop DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES scripts/madway_power.py scripts/madway_lock.py scripts/madway_wallpaper.py scripts/madway_files.py DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES scripts/madway_power.py scripts/madway_lock.py scripts/madway_wallpaper.py scripts/madway_files.py scripts/madway_sound.py scripts/madway_apps.py scripts/madway_settings.py scripts/madway_spotlight.py scripts/madway_media.py scripts/madway_widgets.py scripts/madway_system.py scripts/madway_exit.py scripts/madway_exit_ui.py scripts/madway_gl.py DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY share/madway DESTINATION ${CMAKE_INSTALL_DATADIR})
 
 # Plasma Login/SDDM's session shell does not evaluate quotes in Exec paths.

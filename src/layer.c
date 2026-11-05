@@ -6,10 +6,12 @@
 #include "workspace.h"
 #include "lock.h"
 #include "session.h"
+#include "effects.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_buffer.h>
 #include <wlr/util/log.h>
 
 void madway_layer_focus(struct madway_layer *layer)
@@ -40,8 +42,15 @@ bool madway_arrange_layers(struct madway_server *server)
     if (server->shutting_down) return false;
     bool changed=false;
     struct madway_layer *entry;
-    wl_list_for_each(entry, &server->layers, link)
-        wlr_scene_node_set_enabled(&entry->tree->node, entry->mapped && entry->surface->output->enabled);
+    wl_list_for_each(entry, &server->layers, link) {
+        bool visible=entry->mapped && entry->surface->output->enabled;
+        if(!strncmp(entry->surface->namespace,"madway-panel",12)) {
+            struct madway_output *head;
+            wl_list_for_each(head,&server->outputs,link)
+                if(head->output==entry->surface->output && madway_fullscreen_on(server,head))visible=false;
+        }
+        wlr_scene_node_set_enabled(&entry->tree->node,visible);
+    }
     if (server->keyboard_layer != NULL && !server->keyboard_layer->surface->output->enabled)
     {
         server->keyboard_layer = NULL;
@@ -106,6 +115,7 @@ static void handle_layer_commit(struct wl_listener *listener, void *data)
             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
             madway_layer_focus(layer);
     }
+    madway_effects_commit(layer);
 }
 
 static void handle_layer_map(struct wl_listener *listener, void *data)
@@ -114,6 +124,9 @@ static void handle_layer_map(struct wl_listener *listener, void *data)
     struct madway_layer *layer = wl_container_of(listener, layer, map);
     layer->mapped = true;
     wlr_scene_node_set_enabled(&layer->tree->node, true);
+    madway_effects_map(layer);
+    // Publish the new wallpaper as fading from its first mapped state, so the
+    // helper cannot retire the previous background before the fade starts.
     relayout(layer->server);
     if (layer->surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP &&
         layer->surface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
@@ -126,6 +139,7 @@ static void handle_layer_unmap(struct wl_listener *listener, void *data)
 {
     (void)data;
     struct madway_layer *layer = wl_container_of(listener, layer, unmap);
+    madway_effects_unmap(layer);
     layer->mapped = false;
     madway_dock_finish(layer);
     wlr_scene_node_set_enabled(&layer->tree->node, false);
@@ -142,6 +156,8 @@ static void handle_layer_destroy(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_layer *layer = wl_container_of(listener, layer, destroy);
     struct madway_server *server = layer->server;
+    if(layer->effect_cache)wlr_buffer_drop(layer->effect_cache);
+    layer->effect_cache=NULL;
     layer->mapped = false;
     madway_dock_finish(layer);
     if (server->keyboard_layer == layer) { server->keyboard_layer = NULL; restore_focus(server); }
@@ -201,6 +217,7 @@ static void handle_new_layer(struct wl_listener *listener, void *data)
 
 bool madway_init_layers(struct madway_server *server)
 {
+    madway_effects_init(server);
     server->layer_shell = wlr_layer_shell_v1_create(server->display, 4);
     if (server->layer_shell == NULL) return false;
     server->new_layer.notify = handle_new_layer;

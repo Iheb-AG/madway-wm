@@ -2,6 +2,7 @@
 import configparser
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -26,11 +27,16 @@ class LockController:
     def config_file(self):
         themes=configparser.ConfigParser(interpolation=None);themes.read(self.share/'themes.ini')
         name=self.desktop.config.get('appearance','theme')
-        palette=themes[name if name in themes else 'black']
+        palette=dict(themes[name if name in themes else 'black'])
+        if self.desktop.config.getboolean('appearance','custom_colors',fallback=False) and self.desktop.config.has_section('colors'):
+            for key,value in self.desktop.config.items('colors'):
+                if key in palette and re.fullmatch(r'#[0-9a-fA-F]{6}',value):palette[key]=value
+        font=self.desktop.config.get('appearance','font',fallback='').strip()
+        if not font or not all(char.isprintable() for char in font):font='Inter' if name in {'argent','argent-dark'} else 'monospace'
         lines=['color='+palette['background'][1:]+'ff','inside-color='+palette['surface'][1:]+'ff',
             'ring-color='+palette['accent'][1:]+'ff','text-color='+palette['text'][1:]+'ff',
             'ring-ver-color='+palette['active'][1:]+'ff','ring-wrong-color=b52b20ff',
-            'font='+('Inter' if name in {'gershwin','gershwin-dark'} else 'monospace'),'font-size=12',
+            'font='+font,'font-size=12',
             'indicator-radius=26','indicator-thickness=3','indicator-idle-visible',
             'show-failed-attempts','ignore-empty-password','show-keyboard-layout']
         path=self.desktop.directory/'swaylock.conf';path.write_text('\n'.join(lines)+'\n');return path

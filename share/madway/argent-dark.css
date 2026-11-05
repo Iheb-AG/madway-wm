@@ -1,4 +1,4 @@
-/* Midnight variant: retain Eau geometry while changing its material and text. */
+/* Midnight variant: retain Argent geometry while changing its material and text. */
 window { background-color: #202124; color: #ededed; }
 label, .bar button label, .menu button label { color: #ededed; }
 button, combobox button {

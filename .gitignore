@@ -32,7 +32,7 @@ __pycache__/
 
 # Personal media assets (not distributed with madway)
 /longhorn assets/
-# Original Gershwin wallpaper, retained locally with its provenance.
+# Optional personal wallpaper; not part of the public theme.
 /share/madway/wallpapers/Abstract Blue.png
 
 COMMIT_NOTES.md

@@ -42,7 +42,7 @@ Supported `set` keys:
 | Key | Values |
 | --- | --- |
 | `panel.position` | `top`, `bottom`, `left`, `right` |
-| `appearance.theme` | `gershwin`, `gershwin-dark`, `black`, `amber`, `terminal`, `slate`, `paper` |
+| `appearance.theme` | `argent`, `argent-dark`, `black`, `amber`, `terminal`, `slate`, `paper` |
 | `appearance.title_height` | 12–24 |
 | `appearance.tile_gap` | 0–12 |
 | `windows.default_mode` | `floating`, `tiled` (new windows) |

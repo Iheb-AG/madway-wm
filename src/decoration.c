@@ -1,7 +1,7 @@
 #include "decoration.h"
 #include "main.h"
 #include "view.h"
-#include "eau.h"
+#include "argent.h"
 
 #include <cairo.h>
 #include <drm_fourcc.h>
@@ -47,7 +47,7 @@ static const struct wlr_buffer_impl title_impl = {
 int madway_frame_title_height(struct madway_view *view)
 {
     int height = view->server->config.title_height;
-    return view->compact_frame && !view->server->config.eau && height > 14 ? 14 : height;
+    return view->compact_frame && !view->server->config.argent && height > 14 ? 14 : height;
 }
 
 static struct wlr_buffer *draw_title(struct madway_view *view, int width)
@@ -64,8 +64,8 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
     }
     bool active = view->server->focused_view == view;
     cairo_t *cr = cairo_create(pixels->surface);
-    if (view->server->config.eau) {
-        madway_eau_title(cr, view, width, title_height);
+    if (view->server->config.argent) {
+        madway_argent_title(cr, view, width, title_height);
         goto complete;
     }
     const float *background = active ? view->server->config.active : view->server->config.surface;
@@ -75,8 +75,11 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
     cairo_set_source_rgb(cr, text[0], text[1], text[2]);
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    PangoFontDescription *font = pango_font_description_from_string("monospace");
-    pango_font_description_set_absolute_size(font, 9 * PANGO_SCALE);
+    struct madway_config *config=&view->server->config;
+    PangoFontDescription *font = pango_font_description_from_string(config->font[0]?config->font:"monospace");
+    int font_size=config->title_font_size?config->title_font_size:9;
+    if(font_size>title_height-2)font_size=title_height-2;
+    pango_font_description_set_absolute_size(font, font_size * PANGO_SCALE);
     pango_layout_set_font_description(layout, font);
     pango_layout_set_single_paragraph_mode(layout, true);
     pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
@@ -141,8 +144,8 @@ void madway_frame_update(struct madway_view *view)
     bool visible = border != 0;
     int width = view->toplevel->base->geometry.width;
     int height = view->toplevel->base->geometry.height;
-    bool rounded = view->server->config.eau && title_height > 0;
-    madway_eau_shadow(view, width + 2, height + title_height + 2,
+    bool rounded = view->server->config.argent && title_height > 0;
+    madway_argent_shadow(view, width + 2, height + title_height + 2,
             rounded && visible && !view->maximized && !view->fullscreen);
     if (view->content_tree != NULL)
         wlr_scene_node_set_position(&view->content_tree->node, border, title_height + border);
@@ -164,7 +167,7 @@ void madway_frame_update(struct madway_view *view)
 
     const float *highlight = view->server->config.border;
     const float shadow[4] = {0, 0, 0, 1};
-    const float *edge_shadow = view->server->config.eau ? highlight : shadow;
+    const float *edge_shadow = view->server->config.argent ? highlight : shadow;
     const float *focus = view->server->config.accent;
     for (int i = 0; i < 4; ++i)
         wlr_scene_rect_set_color(view->borders[i], title_height == 0 && active ? focus : i < 2 ? highlight : edge_shadow);
@@ -213,8 +216,8 @@ enum madway_frame_part madway_frame_at(struct madway_view *view, double lx, doub
     int width = view->toplevel->base->geometry.width;
     if (x < 1 || x >= width + 1 || y < 1 || y >= madway_frame_title_height(view) + 1)
         return MADWAY_FRAME_NONE;
-    if (view->server->config.eau) {
-        int button = madway_eau_button_width(width, madway_frame_title_height(view));
+    if (view->server->config.argent) {
+        int button = madway_argent_button_width(width, madway_frame_title_height(view));
         x -= 1;
         if (x < button) return MADWAY_FRAME_CLOSE;
         if (x >= width - button) return MADWAY_FRAME_MAXIMIZE;

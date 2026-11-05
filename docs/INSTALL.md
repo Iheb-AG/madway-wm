@@ -1,5 +1,10 @@
 # Installing a native madway session
 
+KDE/Plasma and CachyOS are not base-system requirements. This checkout targets
+Linux with wlroots 0.20; the terminal brings KDE libraries and native laptop
+services use systemd-logind. Automatic dependency installation is Arch/CachyOS
+only. See [portability details](CUSTOMIZATION.md#supported-base-system).
+
 madway is an experimental desktop preview. The installer adds a Wayland login
 session alongside your existing desktop; it does not replace KDE, change the
 login manager, select the default session, or reboot the machine. Installation
@@ -105,10 +110,11 @@ are under Panel. Screen edge supports top, bottom, left and right. It is hidden 
 images are opt-in. Your existing `~/.config/madway/settings.ini` is preserved.
 
 Screen locking uses swaylock; install it with `--deps`. This preview has no
-Xwayland, network manager, or full desktop
-portal/polkit-agent setup. It supports native Wayland applications. The system
-power-off action shuts down the whole computer, following a confirmation in
-settings.
+Xwayland or a full desktop portal/polkit-agent setup. Connectivity settings
+use optional NetworkManager/BlueZ tools; see [system settings](SYSTEM_SETTINGS.md). It supports native Wayland applications. The system
+power-off action shuts down the whole computer, following a confirmation. The
+panel's dedicated power icon provides session controls directly; restart and
+shutdown open a separate confirmation dialog, without opening Settings.
 
 ## Test an installation without touching system files
 

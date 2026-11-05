@@ -1,4 +1,4 @@
-#include "eau.h"
+#include "argent.h"
 #include "decoration.h"
 #include "main.h"
 #include "view.h"
@@ -75,7 +75,7 @@ static bool no_shadow_input(struct wlr_scene_buffer *buffer, double *sx, double 
     (void)buffer;(void)sx;(void)sy;return false;
 }
 
-void madway_eau_shadow(struct madway_view *view, int width, int height, bool enabled)
+void madway_argent_shadow(struct madway_view *view, int width, int height, bool enabled)
 {
     wlr_scene_node_set_enabled(&view->shadow_tree->node, enabled);
     if (!enabled) return;
@@ -113,7 +113,7 @@ void madway_eau_shadow(struct madway_view *view, int width, int height, bool ena
         }
 }
 
-int madway_eau_button_width(int width, int height)
+int madway_argent_button_width(int width, int height)
 {
     return width / 3 < height ? width / 3 : height;
 }
@@ -128,11 +128,11 @@ static void gradient(cairo_t *cr, double top, double bottom, int height)
     cairo_pattern_destroy(paint);
 }
 
-void madway_eau_title(cairo_t *cr, struct madway_view *view, int width, int height)
+void madway_argent_title(cairo_t *cr, struct madway_view *view, int width, int height)
 {
     bool active = view->server->focused_view == view;
-    bool dark = view->server->config.eau_dark;
-    int button = madway_eau_button_width(width, height);
+    bool dark = view->server->config.argent_dark;
+    int button = madway_argent_button_width(width, height);
     double radius = width < 14 ? width / 2.0 : 7;
     /* Clip the actual buffer, leaving its upper corners transparent. */
     cairo_move_to(cr, 0, height);
@@ -143,7 +143,11 @@ void madway_eau_title(cairo_t *cr, struct madway_view *view, int width, int heig
     cairo_line_to(cr, width, height);
     cairo_close_path(cr);
     cairo_clip(cr);
-    gradient(cr, dark ? (active ? .24 : .19) : (active ? .83 : .92),
+    struct madway_config *config=&view->server->config;
+    if(config->custom_colors) {
+        const float *color=active?config->active:config->surface;
+        cairo_set_source_rgb(cr,color[0],color[1],color[2]);cairo_paint(cr);
+    } else gradient(cr, dark ? (active ? .24 : .19) : (active ? .83 : .92),
             dark ? (active ? .17 : .14) : (active ? .63 : .83), height);
     cairo_set_source_rgba(cr, 1, 1, 1, .35);
     cairo_rectangle(cr, 0, 0, width, 1);cairo_fill(cr);
@@ -171,7 +175,8 @@ void madway_eau_title(cairo_t *cr, struct madway_view *view, int width, int heig
         double edge = i == 0 ? button - .5 : x + .5;
         cairo_move_to(cr, edge, 1);cairo_line_to(cr, edge, height - 1);cairo_stroke(cr);
         if (!active && !hover && !dark) continue;
-        cairo_set_source_rgb(cr, dark ? 1 : .2, dark ? 1 : .2, dark ? 1 : .2);
+        if(config->custom_colors)cairo_set_source_rgb(cr,config->text[0],config->text[1],config->text[2]);
+        else cairo_set_source_rgb(cr, dark ? 1 : .2, dark ? 1 : .2, dark ? 1 : .2);
         cairo_set_line_width(cr, 1.5);
         cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
         double size = height < 18 ? 1.6 : 2.2;
@@ -187,8 +192,10 @@ void madway_eau_title(cairo_t *cr, struct madway_view *view, int width, int heig
     int available = width - 3 * button - 8;
     if (available <= 0) return;
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    PangoFontDescription *font = pango_font_description_from_string("Inter Medium");
-    pango_font_description_set_absolute_size(font, (height < 18 ? 10 : 13) * PANGO_SCALE);
+    PangoFontDescription *font = pango_font_description_from_string(config->font[0]?config->font:"Inter Medium");
+    int font_size=config->title_font_size?config->title_font_size:(height<18?10:13);
+    if(font_size>height-2)font_size=height-2;
+    pango_font_description_set_absolute_size(font, font_size * PANGO_SCALE);
     pango_layout_set_font_description(layout, font);
     pango_layout_set_single_paragraph_mode(layout, true);
     pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_MIDDLE);
@@ -199,7 +206,9 @@ void madway_eau_title(cairo_t *cr, struct madway_view *view, int width, int heig
     if (x > width - 2 * button - 4 - tw) x = width - 2 * button - 4 - tw;
     if (x < button + 4) x = button + 4;
     double title_color = dark ? (active ? .94 : .65) : (active ? .05 : .7);
-    cairo_set_source_rgb(cr, title_color, title_color, title_color);
+    if(config->custom_colors) {
+        const float *color=active?config->text:config->muted;cairo_set_source_rgb(cr,color[0],color[1],color[2]);
+    } else cairo_set_source_rgb(cr, title_color, title_color, title_color);
     cairo_move_to(cr, x, (height - th) / 2.0);pango_cairo_show_layout(cr, layout);
     pango_font_description_free(font);g_object_unref(layout);
 }

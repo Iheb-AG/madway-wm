@@ -18,6 +18,9 @@ static void color(GKeyFile *file, const char *theme, const char *key, float resu
 
 void madway_theme_load(struct madway_config *config, const char *name)
 {
+    // Upgrade saved preferences without changing the visible theme on login.
+    if (g_strcmp0(name,"gershwin")==0) name="argent";
+    if (g_strcmp0(name,"gershwin-dark")==0) name="argent-dark";
     GKeyFile *file = g_key_file_new();
     char *executable = g_file_read_link("/proc/self/exe", NULL);
     char *bin = executable != NULL ? g_path_get_dirname(executable) : NULL;
@@ -26,8 +29,8 @@ void madway_theme_load(struct madway_config *config, const char *name)
     if (path == NULL || !g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
         g_key_file_load_from_file(file, MADWAY_THEME_SOURCE, G_KEY_FILE_NONE, NULL);
     const char *theme = name != NULL && g_key_file_has_group(file, name) ? name : "black";
-    config->eau_dark = strcmp(theme, "gershwin-dark") == 0;
-    config->eau = strcmp(theme, "gershwin") == 0 || config->eau_dark;
+    config->argent_dark = strcmp(theme, "argent-dark") == 0;
+    config->argent = strcmp(theme, "argent") == 0 || config->argent_dark;
     color(file, theme, "surface", config->surface, "#080808");
     color(file, theme, "active", config->active, "#202020");
     color(file, theme, "text", config->text, "#c8c8c8");

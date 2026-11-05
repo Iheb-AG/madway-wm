@@ -20,11 +20,18 @@ The mixer capture uses deterministic mock speakers, microphone, and application
 stream entries. These demonstrate the real GTK controls without reading or
 changing host audio.
 
-The Midnight settings and desktop-file captures come from the private desktop
-file integration fixture. Its Desktop contains only a fixture folder and text
-files, on a solid-color background. It uses no personal files or wallpaper.
-Regenerate these two captures with `tests/desktop_files.py`; the outputs are
-`build/settings-compact.png` and `build/desktop-icons.png`.
+The Midnight settings capture shows the grouped, searchable settings browser.
+Regenerate it on a private display:
+
+```sh
+MADWAY_EXTENSION_UI=settings_redesign_ui.py MADWAY_TEST_ARTIFACTS="$PWD/build/settings-redesign-review" dbus-run-session -- python3 tests/desktop_extensions.py
+```
+
+Use `build/settings-redesign-review/settings-appearance.png` for `settings.png`.
+The desktop-file capture comes from `tests/desktop_files.py`, whose temporary
+Desktop contains only fixture folders and files on a solid-color background;
+its output is `build/desktop-icons.png`. Neither fixture uses personal wallpaper
+or sound files.
 
 Regenerate the workstation, menu, mixer, launcher, switcher and panel captures
 from the repository root after building:

@@ -1,0 +1,18 @@
+/* Shared utility surfaces use semantic colors, without inherited theme bevels. */
+tooltip { background: @surface@; color: @text@; border: 1px solid @border@; border-radius: 7px; box-shadow: none; }
+.task-preview, .task-preview label { color: @text@; font-family: @font@; font-size: 11px; }
+window.session-dialog { background: transparent; border: 0; padding: 0; }
+.session-card { background: @surface@; color: @text@; border: 1px solid @border@; border-radius: 10px; padding: 18px; }
+.session-card label, .session-card image { color: @text@; font-family: @font@; font-size: 12px; }
+.session-card .session-title { font-size: 18px; font-weight: 600; }
+.session-card button { background: @background@; background-image: none; color: @text@; border: 1px solid @border@; border-radius: 5px; padding: 7px 14px; box-shadow: none; }
+.session-card button:hover, .session-card button:focus { background: @active@; border-color: @accent@; }
+.session-card button:hover label, .session-card button:focus label { color: @selection_text@; }
+.session-card button.session-accept { background: @active@; border-color: @accent@; }
+.session-card button.session-accept label { color: @selection_text@; }
+.menu calendar { background: @surface@; color: @text@; padding: 6px; border: 0; }
+.menu calendar.header, .menu calendar.button { background: @surface@; color: @text@; }
+.menu calendar.highlight { color: @text@; font-weight: 600; }
+.menu calendar:selected { background: @active@; color: @selection_text@; }
+.menu calendar:indeterminate { color: @muted@; }
+.menu button:hover label, .menu button:focus label { color: @selection_text@; }

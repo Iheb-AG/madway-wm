@@ -180,6 +180,28 @@ static int tick(void *unused)
             uint32_t code=command==34?KEY_END:KEY_UP;
             key(code,true);key(code,false);key(KEY_ENTER,true);key(KEY_ENTER,false);
         }
+        else if(command==40 || command==41) {
+            uint32_t code=command==40?KEY_VOLUMEUP:KEY_BRIGHTNESSUP;
+            key(code,true);key(code,false);
+        }
+        else if(command==45 || command==46) {
+            uint32_t modifier=command==46?KEY_LEFTMETA:KEY_LEFTALT;
+            key(modifier,true);key(KEY_B,true);key(KEY_B,false);key(modifier,false);
+        }
+        else if(command==47) {
+            key(KEY_LEFTALT,true);key(KEY_LEFTSHIFT,true);key(KEY_ENTER,true);key(KEY_ENTER,false);key(KEY_LEFTSHIFT,false);key(KEY_LEFTALT,false);
+        }
+        else if(command==55) {
+            struct madway_output *head;
+            wl_list_for_each(head,&server->outputs,link)if(!strcmp(head->output->name,"HEADLESS-2")){wlr_output_destroy(head->output);break;}
+        }
+        else if(command==44) {
+            for(int pressed=1;pressed>=0;--pressed) {
+                struct wlr_pointer_button_event event={.pointer=&pointer,.time_msec=1000,.button=BTN_RIGHT,
+                    .state=pressed?WL_POINTER_BUTTON_STATE_PRESSED:WL_POINTER_BUTTON_STATE_RELEASED};
+                wlr_pointer_notify_button(&pointer,&event);wl_signal_emit_mutable(&pointer.events.frame,NULL);
+            }
+        }
     }
     snprintf(path,sizeof(path),"%s/probe.tmp",root);file=fopen(path,"w");
     if(file) {
@@ -219,8 +241,23 @@ static int tick(void *unused)
                 if (!strcmp(layer->surface->namespace,"madway-desktop") &&
                     wl_resource_get_client(surface->surface->resource)==wl_resource_get_client(layer->surface->resource)) desktop_menu_above=true;
         }
-        fprintf(file,"\"motion\":%s,\"motion_width\":%d,\"motion_height\":%d,\"motion_pixels\":%d,\"incoming\":%d,\"view_enabled\":%s,\"drag\":%s,\"desktop_menu_above\":%s,\"desktop_layers\":%d}\n",
+        fprintf(file,"\"motion\":%s,\"motion_width\":%d,\"motion_height\":%d,\"motion_pixels\":%d,\"incoming\":%d,\"view_enabled\":%s,\"drag\":%s,\"desktop_menu_above\":%s,\"desktop_layers\":%d,\"outputs\":[",
                 server->window_motion?"true":"false",motion_width,motion_height,motion_pixels,incoming,view && view->scene_tree->node.enabled?"true":"false",server->seat->drag?"true":"false",desktop_menu_above?"true":"false",desktop_layers);
+        bool first=true;
+        struct madway_output *head;
+        wl_list_for_each(head,&server->outputs,link) {
+            fprintf(file,"%s{\"name\":\"%s\",\"workspace\":%u,\"transition\":%s}",first?"":",",head->output->name,head->workspace,head->transition?"true":"false");first=false;
+        }
+        fprintf(file,"],\"effects\":[");first=true;
+        wl_list_for_each(layer,&server->layers,link)if(layer->mapped) {
+            pid_t pid;wl_client_get_credentials(wl_resource_get_client(layer->surface->resource),&pid,NULL,NULL);
+            fprintf(file,"%s{\"namespace\":\"%s\",\"opacity\":%.6f,\"active\":%s,\"cache\":%s,\"x\":%d,\"y\":%d,\"width\":%d,\"height\":%d,\"visible\":%s,\"pid\":%d}",
+                first?"":",",layer->surface->namespace,layer->effect_opacity,layer->effect_active?"true":"false",layer->effect_cache?"true":"false",
+                layer->scene_layer->tree->node.x,layer->scene_layer->tree->node.y,layer->surface->surface->current.width,layer->surface->surface->current.height,layer->tree->node.enabled?"true":"false",pid);first=false;
+        }
+        fprintf(file,"],\"closing\":%d,\"window_closing\":%d,\"focused_fullscreen\":%s,\"style_custom\":%s,\"style_title_size\":%d,\"style_active\":%u,\"use_super\":%s}\n",
+                server->effects_initialized?wl_list_length(&server->closing_effects):0,wl_list_length(&server->window_closes),server->focused_view && server->focused_view->fullscreen?"true":"false",server->config.custom_colors?"true":"false",server->config.title_font_size,
+                ((unsigned)(server->config.active[0]*255+.5)<<16)|((unsigned)(server->config.active[1]*255+.5)<<8)|(unsigned)(server->config.active[2]*255+.5),server->config.use_super?"true":"false");
         fclose(file);char final[1024];snprintf(final,sizeof(final),"%s/probe.json",root);rename(path,final);
     }
     wl_event_source_timer_update(timer,10);return 0;

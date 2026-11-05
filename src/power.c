@@ -6,6 +6,7 @@
 #include "view.h"
 #include "lock.h"
 #include "transition.h"
+#include "effects.h"
 #include <glib.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,6 +67,7 @@ void madway_power_prepare_sleep(struct madway_server *server)
 {
     if (server->shutting_down) return;
     server->sleeping = true;
+    madway_effects_cancel(server);
     madway_transition_finish(server);
     if (server->interactive_view != NULL && !server->interactive_forward_button)
         server->consumed_button=server->interactive_button;
@@ -107,6 +109,7 @@ static void active_changed(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_server *server=wl_container_of(listener,server,session_active);
     if (!server->session->active) {
+        madway_effects_cancel(server);
         madway_transition_finish(server);
         if (server->interactive_view != NULL && !server->interactive_forward_button)
             server->consumed_button=server->interactive_button;

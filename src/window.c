@@ -176,6 +176,7 @@ void madway_end_interactive(struct madway_server *server)
             if (output->output == target) {
                 bool changed = view->output != output;
                 view->output = output;
+                if(changed){view->workspace=output->workspace;madway_workspace_activate_output(server,output);}
                 if (changed) madway_session_publish_state(server);
                 break;
             }

@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='madway-dock-') as tmp:
     config=root/'config';(config/'madway').mkdir(parents=True)
     (config/'user-dirs.dirs').write_text('XDG_PICTURES_DIR="$HOME/Pictures"\n')
     ini=config/'madway/settings.ini'
-    ini.write_text('[appearance]\ntheme=gershwin-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[dock]\nanimation_ms=300\n[wallpaper]\ntype=color\ncolor=#142034\n[output:HEADLESS-1]\nmode=1280x720@60000\nx=0\ny=0\n[output:HEADLESS-2]\nmode=800x600@60000\nx=1280\ny=0\n')
+    ini.write_text('[appearance]\ntheme=argent-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[dock]\nanimation_ms=300\n[wallpaper]\ntype=color\ncolor=#142034\n[output:HEADLESS-1]\nmode=1280x720@60000\nx=0\ny=0\n[output:HEADLESS-2]\nmode=800x600@60000\nx=1280\ny=0\n')
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wlroots-0.20','wayland-server','xkbcommon'],text=True).split()
     flags+=['-I'+str(repo/'build/protocols')]
     probe=root/'probe.so'

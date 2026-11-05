@@ -1,0 +1,35 @@
+/* Mixer-only geometry and colors, applied after the shared GTK theme. */
+.menu.audio-menu { background: @surface@; color: @text@; }
+.audio-menu .audio-mixer { background: @surface@; }
+.audio-menu .audio-row { padding: 0; border: 0; background: transparent; }
+.audio-menu .audio-mixer label { color: @text@; font-size: 11px; padding: 0; }
+.audio-menu .audio-mixer .audio-group { color: @muted@; font-size: 10px; font-weight: 600; }
+.audio-menu .audio-mixer .audio-empty { color: @muted@; }
+.audio-menu .audio-mixer .audio-value { color: @text@; font-size: 11px; font-weight: 500; }
+.audio-menu .audio-row button {
+    min-width: 34px; min-height: 18px; margin: 0; padding: 1px 5px;
+    border: 1px solid alpha(@border@,.5); border-radius: 2px;
+    background: alpha(@border@,.07); box-shadow: none;
+}
+.audio-menu .audio-row button label { color: @text@; }
+.audio-menu .audio-row button:hover, .audio-menu .audio-row button:focus {
+    background: alpha(@accent@,.14); border-color: @accent@;
+}
+.audio-menu .audio-row button:checked { background: alpha(@accent@,.24); border-color: @accent@; }
+.audio-menu .audio-row button:disabled { background: transparent; border-color: transparent; }
+.audio-menu .audio-row button:disabled label { color: @muted@; }
+.audio-menu .audio-row scale { min-width: 0; min-height: 18px; padding: 2px 5px; margin: 0; }
+.audio-menu .audio-row scale trough {
+    min-height: 4px; border: 0; border-radius: 2px;
+    background: alpha(@border@,.3); box-shadow: none;
+}
+.audio-menu .audio-row scale highlight { background: @accent@; border: 0; border-radius: 2px; box-shadow: none; }
+.audio-menu .audio-row scale slider {
+    min-width: 10px; min-height: 10px; margin: -3px 0; padding: 0;
+    border: 1px solid @border@; border-radius: 6px;
+    background: mix(@surface@, @text@, .2); box-shadow: none;
+}
+.audio-menu button.audio-footer { padding: 4px 8px; border-top: 1px solid alpha(@border@,.3); }
+.audio-menu scrollbar { background: transparent; border: 0; padding: 0; }
+.audio-menu scrollbar slider { min-width: 4px; min-height: 24px; margin: 2px; border: 0; border-radius: 2px; background: alpha(@border@,.4); }
+.audio-menu undershoot, .audio-menu overshoot { background: transparent; background-image: none; box-shadow: none; }

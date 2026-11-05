@@ -1,12 +1,11 @@
 window { background: transparent; }
-/* Eau+Menu.m: top .95/.80 opacity, bottom .85/.70; no blur. */
+/* Argent silver gradient, opaque so wallpaper lines do not bleed into controls. */
 .bar {
-    padding-right: 8px;
-    background-image: linear-gradient(to bottom, rgba(242,242,242,.8), rgba(217,217,217,.7));
+    background-image: linear-gradient(to bottom, #f2f2f2, #d9d9d9);
     border-top: 1px solid rgba(255,255,255,.8); border-bottom: 1px solid #999999;
 }
 .bar.bottom { border-top: 1px solid white; border-bottom: 0; }
-.bar.left, .bar.right { padding-right: 0; background-image: linear-gradient(to right, rgba(242,242,242,.8), rgba(217,217,217,.7)); }
+.bar.left, .bar.right { background-image: linear-gradient(to right, #f2f2f2, #d9d9d9); }
 .bar button, .menu button {
     min-height: 20px; padding: 0 5px; border: 0; border-radius: 0;
     background: transparent; box-shadow: none; color: #0d0d0d;

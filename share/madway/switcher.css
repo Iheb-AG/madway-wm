@@ -1,0 +1,26 @@
+window.switcher-window { background: transparent; padding: 10px; border: 0; box-shadow: none; }
+.switcher-surface {
+    background: @background@; border: 1px solid alpha(@border@,.48); border-radius: 12px;
+    padding: 12px; box-shadow: 0 4px 10px alpha(#000000,.28);
+}
+.switcher-surface * { font-family: @font@; font-size: 12px; text-shadow: none; }
+.switcher-surface scrolledwindow, .switcher-surface viewport { background: transparent; border: 0; padding: 0; }
+.switcher-surface undershoot, .switcher-surface overshoot { background: none; border: 0; box-shadow: none; }
+.switcher-surface button.switcher-card {
+    min-width: 0; min-height: 0; padding: 7px; margin: 0;
+    border: 2px solid transparent; border-radius: 8px; box-shadow: none;
+    background: alpha(@surface@,.65); background-image: none;
+}
+.switcher-surface button.switcher-card:hover { background: alpha(@accent@,.08); }
+.switcher-surface button.switcher-card.selected {
+    border-color: @accent@; background: alpha(@accent@,.09); background-image: none;
+}
+.switcher-surface .switcher-app { color: @text@; font-size: 12px; font-weight: 600; }
+.switcher-surface .switcher-title { color: @muted@; font-size: 11px; }
+.switcher-surface .switcher-footer { padding: 9px 2px 0; }
+.switcher-surface .switcher-caption { color: @text@; font-size: 12px; }
+.switcher-surface .switcher-count { color: @muted@; font-size: 11px; padding: 0 3px; }
+.switcher-surface .switcher-key {
+    color: @muted@; font-size: 10px; padding: 2px 5px;
+    border: 1px solid alpha(@border@,.3); border-radius: 4px;
+}

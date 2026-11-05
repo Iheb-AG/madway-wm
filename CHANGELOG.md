@@ -2,6 +2,92 @@
 
 ## Unreleased
 
+- Start session audio at the visual animation epoch and wait for audio and visuals
+  concurrently, with no replay at shutdown. Add a matching startup/logon reveal,
+  opening preview/duration, and a Settings window fade/zoom.
+- Replace Settings' two-axis tabs with one grouped source list. Restore theme-aware
+  beveled buttons, pill switches, inset fields and compact aligned form controls.
+- Add Event horizon, Prismatic fold, Liquid lens, Ember dissolve, Mechanical shutter
+  and Aurora veil shaders, including lensing, refraction, perspective folds,
+  fractal noise and lit aperture geometry. Preserve exact start/end frames.
+
+- Add configurable session exit effects: software fade or custom CRT standby,
+  iris-close and soft-dissolve shaders, synchronized per-output frame-clock motion,
+  a duration control and preview without saving or performing a power action.
+- Sequence exit effects through a bounded controller with one-use completion tokens,
+  duplicate/stale-request guards, privacy cancellation, GL/capture fallback,
+  failed-action restoration and watchdogs. Route the logout shortcut through it.
+
+- Add Network/Bluetooth settings, default application associations, local date/time
+  and system information. Use optional system providers, keep device work off the
+  GTK thread, and document the Plasma settings audit and remaining gaps.
+- Add explicit tile swaps and Alt+Shift+Enter to promote the focused tile to master.
+  Preserve focus and slot sizing; exclude other monitors/workspaces and non-tiles.
+- Add window-image taskbar tooltips and an interactive clock calendar.
+- Rename desktop profiles and native styling to Argent Silver and Argent Midnight;
+  migrate saved legacy names and refresh the README/theme documentation.
+- Use centered palette-aware restart/shutdown/logout cards with Cancel initially
+  focused, and contrast-aware calendar, tooltip and menu selection text.
+
+- Animate window closing with an output-paced centered shrink/fade of the last
+  valid frame. Keep snapshots independent of destroyed clients, transparent and
+  non-interactive; bound memory/concurrency and clear them on workspace/output
+  changes, lock, sleep and shutdown. Add a separate toggle and duration.
+- Add native Spotlight application search with faint grey inline completion,
+  Tab/Right acceptance and cursor/IME guards. Keep Wofi for command search.
+- Keep media feedback warm and immediately visible. Move hardware commands off
+  the UI loop, predict the requested value and reconcile hardware confirmation
+  without replaying stale results or restarting on monitor changes.
+- Enforce fullscreen panel occlusion during every layer relayout, including
+  notifications, wallpaper and media commits that do not change usable geometry.
+
+- Add Alt+B (or Super+B with that modifier) to show/hide the panel, save the
+  preference, dismiss its menu and release/restore its reserved workspace area.
+
+- Fix panel menu toggling by preserving panel clicks until the helper decides
+  whether to close the same menu or open another one.
+- Group Settings into Appearance, Workspace, Input and System. Add dedicated
+  wallpaper, animation, dock and launcher pages; expose palette/font/icon-theme,
+  panel widget/spacing/clock, dock content/pin ordering and desktop grid controls.
+- Preview monitor layouts with draggable, snapping rectangles, logical sizing,
+  scale/rotation feedback and horizontal/vertical arrangement. Apply display
+  drafts only on confirmation with the existing configuration validator.
+
+- Reflow the audio popup into compact two-row device/application controls. Keep
+  percentages in a separate high-contrast column, replace oversized mute checks
+  with toggle buttons, use an opaque themed surface and expose the scrollbar.
+
+- Give each monitor independent workspaces, remembered focus and local panel/dock
+  tasks. Preserve application-filled workspace slides through client commits and
+  dock relayouts, and allow simultaneous transitions on separate monitors.
+- Align desktop icons using fixed image and two-line filename cells.
+- Crossfade wallpaper replacements, retaining the previous background until every
+  monitor completes the fade. Animate launcher opening/closing and media overlays;
+  smoothly retarget volume/brightness bars on repeated key presses.
+- Add persistent Waybar dock pins through running-icon and panel-task context
+  menus, with launch, activate, open-another-window and unpin actions.
+- Distinguish the first native login after boot (startup sound) from later logins
+  (logon sound), with a private per-user boot marker and separate sound settings.
+
+- Restyle application/command search as a compact Spotlight-style surface with
+  app icons, a larger search field, rounded rows and soft selection highlights.
+  Keep Wofi matching/launch behavior and adapt geometry to the active output.
+- Give Alt+Tab its own rounded preview-card surface, app icons, two-level captions
+  and a compact selection footer. Keep widgets stable while cycling, load HiDPI
+  previews at output scale, and capture sharper 480×300 window images.
+
+- Inset panel contents by 10px at both ends on every screen edge. Use an opaque
+  silver light-Argent background to prevent wallpaper stripes showing through.
+  Keep a dedicated session icon visible across themes and panel positions, with
+  direct lock/sleep/logout controls and standalone restart/shutdown confirmation.
+
+- Add default three-finger horizontal workspace swipes, switching once on release
+  with existing animations and bounded workspace navigation. Add live enable,
+  reverse-direction and distance settings; reject short/vertical/cancelled
+  gestures and cancel on lock, sleep, reload, click, Escape and device removal.
+  Forward unreserved swipe, pinch and hold gestures through pointer-gestures-v1
+  to applications, retaining the original recipient through cancellation.
+
 - Recover from failed output-frame commits without waiting for input. Restore
   damaged regions and retry per output with refresh-aware, bounded backoff;
   stop retries while sleeping/inactive and remove timers on output destruction.
@@ -67,7 +153,7 @@
   tray, configurable on four edges. Add foreign-toplevel window management with
   lock guards and metadata withdrawal. Keep every running application's
   icon/title in the top taskbar with click-to-minimize/focus/restore behavior.
-- Add Gershwin Midnight across frames, panel, menus, settings, launcher and dock.
+- Add Argent Midnight across frames, panel, menus, settings, launcher and dock.
   Separate audio names, mute/default controls and sliders to prevent overlap.
 - Add Print / Shift+Print / Ctrl+Print screenshots and menu controls using grim,
   slurp and wl-copy, private unique PNG files, selection cancellation and lock
@@ -90,7 +176,7 @@
   focus recovery. Keep native sessions alive through temporary loss of all
   outputs. Test with fake logind, virtual switches and headless displays.
 
-- Add a Gershwin/Eau desktop preset from the local reference: silver gradients,
+- Add a Argent/Argent desktop preset from the local reference: silver gradients,
   Inter text, blue selection, translucent 22px panel, rounded title bars and
   cached non-interactive window shadows. Include the original wallpaper locally
   while keeping the asset Git-ignored. Add functional minimize controls and

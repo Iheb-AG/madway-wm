@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='madway-desktop-files-') as tmp:
     (desktop/'Another.txt').write_text('another');source=root/'Incoming.txt';source.write_text('dragged into desktop')
     config=root/'config';(config/'madway').mkdir(parents=True)
     (config/'user-dirs.dirs').write_text('XDG_DESKTOP_DIR="'+str(desktop)+'"\n')
-    ini=config/'madway/settings.ini';ini.write_text('[appearance]\ntheme=gershwin-dark\ntitle_height=22\n[desktop]\nicons=true\nfolder='+str(desktop)+'\n[notifications]\nenabled=false\n[panel]\nheight=22\nmetrics=false\n[wallpaper]\ntype=color\ncolor=#31404c\n[output:HEADLESS-1]\nmode=1280x720@60000\n')
+    ini=config/'madway/settings.ini';ini.write_text('[appearance]\ntheme=argent-dark\ntitle_height=22\n[desktop]\nicons=true\nfolder='+str(desktop)+'\n[notifications]\nenabled=false\n[panel]\nheight=22\nmetrics=false\n[wallpaper]\ntype=color\ncolor=#31404c\n[output:HEADLESS-1]\nmode=1280x720@60000\n')
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wlroots-0.20','wayland-server','xkbcommon'],text=True).split()
     probe=root/'probe.so';subprocess.run(['cc','-shared','-fPIC','-DWLR_USE_UNSTABLE','-Isrc','-Ibuild/protocols','tests/dock_probe.c','-o',str(probe),*flags,'-ldl'],check=True)
     env={**os.environ,'HOME':tmp,'XDG_CONFIG_HOME':str(config),'XDG_DATA_HOME':str(root/'data'),'XDG_CACHE_HOME':str(root/'cache'),

@@ -3,6 +3,8 @@
 #include "motion.h"
 #include "transition.h"
 #include "dock.h"
+#include "effects.h"
+#include "closing.h"
 #include <time.h>
 
 double madway_animation_now(void)
@@ -32,9 +34,11 @@ void madway_animation_frame(struct madway_output *output)
     madway_transition_frame(output,now);
     madway_motion_frame(output,now);
     madway_dock_frame(output);
+    madway_effects_frame(output,now);
+    madway_close_frame(output,now);
 }
 
 bool madway_animation_active(struct madway_output *output)
 {
-    return madway_transition_active(output) || madway_motion_active(output) || madway_dock_active(output);
+    return madway_transition_active(output) || madway_motion_active(output) || madway_dock_active(output) || madway_effects_active(output) || madway_close_active(output);
 }

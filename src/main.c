@@ -10,6 +10,8 @@
 #include "lock.h"
 #include "taskbar.h"
 #include "transition.h"
+#include "effects.h"
+#include "closing.h"
 #include "animation.h"
 #include <wlr/backend/session.h>
 
@@ -124,6 +126,11 @@ static void handle_output_destroy(struct wl_listener *listener, void *data)
     struct madway_output *output = wl_container_of(listener, output, destroy);
     struct madway_server *server = output->server;
 
+    madway_cancel_pointer_grab(server);
+    madway_transition_finish_output(output);
+    madway_close_cancel(server,output);
+    madway_effects_output_destroy(output);
+    if(server->active_output==output)server->active_output=NULL;
     if (output->frame_retry) wl_event_source_remove(output->frame_retry);
     wl_list_remove(&output->frame.link);
     wl_list_remove(&output->request_state.link);
@@ -131,11 +138,14 @@ static void handle_output_destroy(struct wl_listener *listener, void *data)
     wl_list_remove(&output->link);
     madway_lock_remove_output(output);
     madway_layer_output_destroy(server, output->output);
+    struct madway_output *replacement=NULL,*candidate;
+    wl_list_for_each(candidate,&server->outputs,link)if(candidate->output->enabled){replacement=candidate;break;}
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
         if (view->output == output)
         {
-            view->output = NULL;
+            if(replacement && view->workspace==output->workspace)view->workspace=replacement->workspace;
+            view->output = replacement;
             // Keep a floating window reachable after its monitor disappears.
             view->floating_geometry.x = view->restore_geometry.x = 32;
             view->floating_geometry.y = view->restore_geometry.y = 32;
@@ -314,6 +324,7 @@ int main(int argc, char *argv[])
     wl_list_init(&server.keyboards);
     wl_list_init(&server.pointers);
     wl_list_init(&server.layers);
+    wl_list_init(&server.window_closes);
     wl_list_init(&server.switches);
     madway_session_reload(&server);
     int result = EXIT_FAILURE;
@@ -429,7 +440,9 @@ int main(int argc, char *argv[])
 
     // cleanup
 cleanup:
+    madway_close_cancel(&server,NULL);
     madway_transition_finish(&server);
+    madway_effects_cancel(&server);
     madway_session_stop(&server);
     server.shutting_down = true;
     madway_power_finish(&server);

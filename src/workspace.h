@@ -9,6 +9,11 @@
 
 struct madway_server;
 struct madway_view;
+struct madway_output;
+struct madway_view *madway_fullscreen_on(struct madway_server *server,struct madway_output *output);
+struct madway_output *madway_workspace_output(struct madway_server *server);
+void madway_workspace_activate_output(struct madway_server *server,struct madway_output *output);
+void madway_workspace_switch_output(struct madway_server *server,struct madway_output *output,unsigned workspace);
 
 bool madway_view_visible(struct madway_view *view);
 void madway_workspace_arrange(struct madway_server *server);
@@ -19,6 +24,7 @@ void madway_toggle_floating(struct madway_view *view);
 bool madway_tile_resize_begin(struct madway_view *view, uint32_t edges);
 void madway_tile_resize_update(struct madway_server *server, int dx, int dy);
 void madway_move_tile(struct madway_server *server, const char *direction);
+void madway_swap_tile(struct madway_server *server, uint32_t identity);
 void madway_switcher_step(struct madway_server *server, bool backwards);
 void madway_switcher_finish(struct madway_server *server, bool cancel);
 void madway_cycle_focus(struct madway_server *server, bool backwards);

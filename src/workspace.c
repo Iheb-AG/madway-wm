@@ -10,16 +10,35 @@
 #include "preview.h"
 #include "transition.h"
 #include "motion.h"
+#include "closing.h"
 #include <string.h>
 #include <wlr/util/edges.h>
 #include <wlr/util/log.h>
 
-bool madway_view_visible(struct madway_view *view)
+struct madway_output *madway_workspace_output(struct madway_server *server)
 {
-    return view->mapped && !view->minimized && view->workspace == view->server->active_workspace;
+    if(server->active_output && server->active_output->output->enabled)return server->active_output;
+    struct madway_output *output;
+    wl_list_for_each(output,&server->outputs,link)if(output->output->enabled) {
+        server->active_output=output;server->active_workspace=output->workspace;return output;
+    }
+    server->active_output=NULL;return NULL;
 }
 
-static struct madway_view *fullscreen_on(struct madway_server *server, struct madway_output *output)
+void madway_workspace_activate_output(struct madway_server *server,struct madway_output *output)
+{
+    if(!output || !output->output->enabled)return;
+    bool changed=server->active_output!=output;
+    server->active_output=output;server->active_workspace=output->workspace;
+    if(changed)madway_session_publish_state(server);
+}
+
+bool madway_view_visible(struct madway_view *view)
+{
+    return view->mapped && !view->minimized && view->output && view->output->output->enabled && view->workspace==view->output->workspace;
+}
+
+struct madway_view *madway_fullscreen_on(struct madway_server *server, struct madway_output *output)
 {
     struct madway_view *view;
     wl_list_for_each_reverse(view, &server->views, link)
@@ -51,20 +70,21 @@ static void configure_tile(struct madway_view *view, int x, int y, int width, in
 void madway_workspace_arrange(struct madway_server *server)
 {
     if (server->shutting_down) return;
-    madway_transition_cancel_running(server);
     madway_motion_cancel_running(server);
     struct madway_view *view;
     wl_list_for_each(view, &server->views, link)
     {
         if (view->output == NULL || !view->output->output->enabled)
         {
+            bool current=view->output && view->workspace==view->output->workspace;
             view->output = NULL;
             struct madway_output *candidate;
             wl_list_for_each(candidate, &server->outputs, link)
                 if (candidate->output->enabled) { view->output = candidate; break; }
+            if(current && view->output)view->workspace=view->output->workspace;
         }
         bool visible = view->output != NULL && madway_view_visible(view);
-        struct madway_view *fullscreen = visible ? fullscreen_on(server, view->output) : NULL;
+        struct madway_view *fullscreen = visible ? madway_fullscreen_on(server, view->output) : NULL;
         if (fullscreen != NULL && view != fullscreen && !view->keep_above) visible = false;
         wlr_scene_node_set_enabled(&view->scene_tree->node, visible);
     }
@@ -132,7 +152,7 @@ void madway_workspace_arrange(struct madway_server *server)
             wl_list_for_each(output, &server->outputs, link)
                 if (output->output == layer->surface->output)
                     wlr_scene_node_set_enabled(&layer->tree->node, layer->mapped && output->output->enabled &&
-                            fullscreen_on(server, output) == NULL);
+                            madway_fullscreen_on(server, output) == NULL);
         }
     madway_session_publish_state(server);
     if (server->interactive_view == NULL) madway_rebase_cursor(server);
@@ -141,9 +161,15 @@ void madway_workspace_arrange(struct madway_server *server)
 void madway_workspace_focus(struct madway_server *server)
 {
     if (server->shutting_down) return;
+    struct madway_output *output=madway_workspace_output(server);
+    unsigned previous=output?output->workspace_focus[output->workspace]:0;
     struct madway_view *view;
+    wl_list_for_each(view,&server->views,link)
+        if(view->id==previous && view->output==output && madway_view_visible(view) && !view->desktop_overlay) {
+            madway_focus_view(server,view);return;
+        }
     wl_list_for_each_reverse(view, &server->views, link)
-        if (madway_view_visible(view) && !view->desktop_overlay && view->scene_tree->node.enabled)
+        if (view->output==output && madway_view_visible(view) && !view->desktop_overlay && view->scene_tree->node.enabled)
         {
             madway_focus_view(server, view);
             return;
@@ -153,18 +179,28 @@ void madway_workspace_focus(struct madway_server *server)
 
 void madway_workspace_switch(struct madway_server *server, unsigned workspace)
 {
-    if (workspace >= MADWAY_WORKSPACE_COUNT || workspace == server->active_workspace) return;
+    madway_workspace_switch_output(server,madway_workspace_output(server),workspace);
+}
+
+void madway_workspace_switch_output(struct madway_server *server,struct madway_output *output,unsigned workspace)
+{
+    if(!output || !output->output->enabled || workspace>=MADWAY_WORKSPACE_COUNT)return;
+    madway_workspace_activate_output(server,output);
+    if(workspace==output->workspace)return;
+    madway_close_cancel(server,output);
+    server->workspace_changing=true;
     if (server->interactive_view != NULL && !server->interactive_forward_button)
         server->consumed_button = server->interactive_button;
     madway_end_interactive(server);
     madway_cancel_pointer_grab(server);
     madway_focus_view(server, NULL);
     madway_transition_prepare(server,workspace);
-    server->active_workspace = workspace;
+    output->workspace=workspace;server->active_workspace = workspace;
     madway_workspace_arrange(server);
     madway_workspace_focus(server);
     madway_transition_start(server);
-    wlr_log(WLR_INFO, "Workspace %u", workspace + 1);
+    server->workspace_changing=false;
+    wlr_log(WLR_INFO, "Workspace %u on %s", workspace + 1,output->output->name);
 }
 
 void madway_workspace_move_view(struct madway_view *view, unsigned workspace)
@@ -226,12 +262,32 @@ void madway_cycle_focus(struct madway_server *server, bool backwards)
         position = backwards ? position->prev : position->next;
         if (position == head) position = backwards ? position->prev : position->next;
         struct madway_view *view = wl_container_of(position, view, layout_link);
-        if (view->mapped && view->workspace == server->active_workspace && !view->desktop_overlay)
+        if (view->mapped && view->output==madway_workspace_output(server) && view->workspace==view->output->workspace && !view->desktop_overlay)
         {
             madway_focus_view(server, view);
             madway_rebase_cursor(server);
             return;
         }
+    }
+}
+
+void madway_swap_tile(struct madway_server *server, uint32_t identity)
+{
+    struct madway_view *view=server->focused_view, *entry;
+    if (server->interactive_view || !view || !view->output || !is_tile(view,view->output)) return;
+    wl_list_for_each(entry,&server->layout_views,layout_link) {
+        if (entry==view || entry->id!=identity || !is_tile(entry,view->output)) continue;
+        struct wl_list placeholder;
+        wl_list_insert(&view->layout_link,&placeholder);
+        wl_list_remove(&view->layout_link);
+        wl_list_insert(&entry->layout_link,&view->layout_link);
+        wl_list_remove(&entry->layout_link);
+        wl_list_insert(&placeholder,&entry->layout_link);
+        wl_list_remove(&placeholder);
+        // The proportions belong to tile slots, not the applications in them.
+        double weight=view->tile_weight;view->tile_weight=entry->tile_weight;entry->tile_weight=weight;
+        madway_workspace_arrange(server);
+        return;
     }
 }
 
@@ -246,7 +302,7 @@ void madway_move_tile(struct madway_server *server, const char *direction)
         if (is_tile(entry, view->output))
         { if (entry == view) current = count; ++count; }
     unsigned target = current;
-    if (!strcmp(direction, "left") && current > 0) target = 0;
+    if ((!strcmp(direction, "left") || !strcmp(direction,"master")) && current > 0) target = 0;
     else if (!strcmp(direction, "right") && current == 0 && count > 1) target = 1;
     else if (!strcmp(direction, "up") && current > 1) target = current - 1;
     else if (!strcmp(direction, "down") && current > 0 && current + 1 < count) target = current + 1;
@@ -255,14 +311,7 @@ void madway_move_tile(struct madway_server *server, const char *direction)
     wl_list_for_each(entry, &server->layout_views, layout_link)
         if (is_tile(entry, view->output) && index++ == target)
         {
-            struct wl_list placeholder;
-            wl_list_insert(&view->layout_link, &placeholder);
-            wl_list_remove(&view->layout_link);
-            wl_list_insert(&entry->layout_link, &view->layout_link);
-            wl_list_remove(&entry->layout_link);
-            wl_list_insert(&placeholder, &entry->layout_link);
-            wl_list_remove(&placeholder);
-            madway_workspace_arrange(server);
+            madway_swap_tile(server,entry->id);
             return;
         }
 }

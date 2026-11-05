@@ -9,6 +9,7 @@ bool madway_motion_active(struct madway_output *output);
 void madway_motion_commit(struct madway_view *view);
 void madway_motion_prepare(struct madway_view *view);
 void madway_motion_start(struct madway_view *view,bool minimizing,bool restoring);
+void madway_motion_open(struct madway_view *view);
 void madway_motion_finish(struct madway_server *server);
 void madway_motion_cancel_running(struct madway_server *server);
 void madway_motion_focus(struct madway_server *server,struct madway_view *view);

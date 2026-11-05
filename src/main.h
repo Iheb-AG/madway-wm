@@ -41,12 +41,16 @@ struct madway_server
     struct wlr_layer_shell_v1 *layer_shell;
     struct wl_listener new_layer;
     struct wl_list layers;
+    struct wl_list closing_effects;
+    struct wl_list window_closes;
+    bool effects_initialized;
     struct madway_layer *keyboard_layer;
     struct madway_config config;
     char input_error[160];
     struct madway_transition *workspace_transition;
     struct madway_motion *window_motion;
     struct madway_drag *drag;
+    struct madway_gestures *gestures;
     unsigned next_view_id, switcher_origin;
     bool switcher_active;
     pid_t session_pid;
@@ -70,6 +74,10 @@ struct madway_server
     struct wlr_scene_tree *above_windows;
     struct wl_list layout_views; // Stable tiling order, independent of focus/stacking
     unsigned active_workspace;
+    struct madway_output *active_output;
+    bool workspace_changing;
+    double dock_context_until;
+    int dock_context_x,dock_context_y;
     struct madway_view *focused_view;
 
     struct wlr_output_layout *output_layout; // Shared coordinates for outputs and cursor
@@ -125,6 +133,9 @@ struct madway_output
     bool positioned;
     bool lid_disabled;
     int master_percent; // Zero uses the configured default; drags override this output.
+    unsigned workspace;
+    unsigned workspace_focus[9];
+    struct madway_transition *transition;
     struct wl_list link;
     struct wl_listener frame;
     struct wl_listener request_state;

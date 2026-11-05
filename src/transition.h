@@ -8,5 +8,6 @@ bool madway_transition_active(struct madway_output *output);
 void madway_transition_prepare(struct madway_server *server,unsigned target);
 void madway_transition_start(struct madway_server *server);
 void madway_transition_finish(struct madway_server *server);
+void madway_transition_finish_output(struct madway_output *output);
 void madway_transition_cancel_running(struct madway_server *server);
 #endif

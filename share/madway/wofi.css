@@ -1,11 +1,22 @@
-* { font-family: monospace; font-size: 11px; border-radius: 0; }
-window { background: #080808; color: #d0d0d0; border: 1px solid #383838; }
-#input { margin: 0; padding: 7px 9px; min-height: 0; background: #101010; color: #eeeeee; border: 0; border-bottom: 1px solid #303030; box-shadow: none; }
-#input image { -gtk-icon-transform: scale(0.75); }
-/* Wofi's dynamic line height excludes scroll margins: they clip the last row. */
-#scroll { margin: 0; padding: 0; border: 0; }
-#entry { min-height: 0; padding: 3px 6px; }
-#entry:selected { background: #282828; color: #ffffff; }
-#text:selected { color: #ffffff; }
-#outer-box, #inner-box { margin: 0; padding: 0; }
-#outer-box { padding: 3px; }
+/* Spotlight-style search surface. Palette tokens are resolved by overlay_style. */
+* { font-family: @font@; font-size: 13px; }
+window { background: transparent; border: 0; border-radius: 0; padding: 10px; color: @text@; }
+#outer-box {
+    padding: 8px; margin: 0; border: 1px solid alpha(@border@,.42); border-radius: 12px;
+    background: @background@; box-shadow: 0 4px 10px alpha(#000000,.28);
+}
+#input {
+    min-height: 28px; margin: 0 0 6px; padding: 8px 9px;
+    border: 0; border-bottom: 1px solid alpha(@border@,.22); border-radius: 0;
+    background: transparent; background-image: none; color: @text@;
+    font-size: 18px; font-weight: 400; box-shadow: none;
+}
+#input image { color: @muted@; -gtk-icon-transform: scale(.85); }
+/* Keep spacing outside the viewport so filtering never clips the final row. */
+#scroll, #scroll viewport, #inner-box { margin: 0; padding: 0; border: 0; background: transparent; }
+#entry { min-height: 28px; margin: 0; padding: 6px 9px; border: 1px solid transparent; border-radius: 7px; }
+#entry:selected { background: alpha(@accent@,.17); border-color: alpha(@accent@,.28); }
+#entry:hover { background: alpha(@accent@,.09); }
+#text, #text:selected { color: @text@; }
+#img { margin-right: 10px; }
+scrollbar, undershoot, overshoot { background: transparent; border: 0; box-shadow: none; background-image: none; }

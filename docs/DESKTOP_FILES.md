@@ -9,6 +9,9 @@ Open **Settings → Desktop** to enable/disable icons, choose another directory
 or set the icon size (24–64 px). Icons appear on the primary monitor; other
 monitors still provide a desktop drop surface and the same right-click menu.
 The surface stays below application windows and clear of panels/dock work areas.
+Image cells and two-line filename cells have fixed dimensions; long names wrap
+and ellipsize without stretching their row or shifting neighboring icon centers.
+Hovering an item shows its full path.
 
 Right-click empty desktop space and choose **Hide desktop icons** to hide the
 file view. Right-click the empty background again and choose **Show desktop

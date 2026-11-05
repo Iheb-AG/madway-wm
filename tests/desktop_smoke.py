@@ -23,10 +23,11 @@ with tempfile.TemporaryDirectory(prefix="mw-desktop-") as tmp:
     config_path=config_home/"madway/settings.ini"
     # Playback is mocked: these placeholders exercise explicit sound paths only.
     sounds=root/"sounds";sounds.mkdir()
-    for event in ("startup", "logout", "shutdown"):
+    for event in ("startup", "logon", "logout", "shutdown"):
         (sounds/(event+".ogg")).write_bytes(b"mock audio fixture")
     config_path.write_text('[desktop]\nicons=false\n[dock]\nenabled=false\n[appearance]\ntitle_height=18\ntile_gap=2\n[sounds]\nenabled=true\nvolume=0.1\n'+
-        ''.join(f'{event}={sounds / (event+".ogg")}\n' for event in ("startup", "logout", "shutdown")))
+        ''.join(f'{event}={sounds / (event+".ogg")}\n' for event in ("startup", "logon", "logout", "shutdown")))
+    with config_path.open('a') as out:out.write('\n[session_effects]\nopening=false\n')
     bin_dir=root/"bin";bin_dir.mkdir()
     hardware=root/"hardware.json";hardware.write_text(json.dumps(dict(volume=50,mute=False,brightness=50)))
     power_root=root/'power';power_root.mkdir()
@@ -210,15 +211,22 @@ else:
             wait_for(lambda:'PANEL HEIGHT RELOAD PASS' in log_path.read_text())
             print('PASS: desktop right-click menu/window action, fullscreen panel hiding, and workspace controls.')
             subprocess.run([sys.executable,str(repo/'tests/panel_ui.py')],env=env,check=True,timeout=20)
-            rows=json.loads(desktop_file.read_text())['windows']
+            subprocess.run([sys.executable,str(repo/'tests/desktop_extensions_ui.py')],env=env,check=True,timeout=15)
+            subprocess.run([sys.executable,str(repo/'tests/switcher_ui.py')],env=env,check=True,timeout=8)
+            # Panel UI checks can leave the pointer on an empty monitor.
+            # Select a real visible client explicitly before testing local focus.
+            rows=[row for row in json.loads(desktop_file.read_text())['all_windows'] if row['visible_workspace']]
             assert rows, 'Expected a real application for minimize/restore'
             identity=rows[0]['id']
+            with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as channel:
+                channel.sendto(('activate '+str(identity)).encode(),str(outputs_file.parent/'compositor.sock'))
+            wait_for(lambda:any(row['id']==identity and row['focused'] for row in json.loads(desktop_file.read_text())['all_windows']))
             control('switcher-select',id=identity)
-            wait_for(lambda:any(row['id']==identity and row['focused'] for row in json.loads(desktop_file.read_text())['windows']))
+            wait_for(lambda:any(row['id']==identity and row['focused'] for row in json.loads(desktop_file.read_text())['all_windows']))
             control('window-minimize')
-            wait_for(lambda:any(row['id']==identity and row['minimized'] for row in json.loads(desktop_file.read_text())['windows']))
+            wait_for(lambda:any(row['id']==identity and row['minimized'] for row in json.loads(desktop_file.read_text())['all_windows']))
             control('switcher-select',id=identity)
-            wait_for(lambda:any(row['id']==identity and row['focused'] and not row['minimized'] for row in json.loads(desktop_file.read_text())['windows']))
+            wait_for(lambda:any(row['id']==identity and row['focused'] and not row['minimized'] for row in json.loads(desktop_file.read_text())['all_windows']))
             print('PASS: real application minimize and panel restoration action.')
             for values, expected in [
                 (dict(kind='sink-input',id=7,operation='volume',value=160), ['set-sink-input-volume','7','100%']),
@@ -276,7 +284,7 @@ else:
             print('PASS: live battery snapshot, real low/critical notifications and dismissal on charging using fake power supplies.')
             control('shutdown-sound')
             wait_for(lambda:audio_log.exists() and 'shutdown.ogg' in audio_log.read_text())
-            assert 'startup.ogg' in audio_log.read_text()
+            assert 'logon.ogg' in audio_log.read_text()
             server.send_signal(signal.SIGTERM);server.wait(timeout=5)
             assert server.returncode==0,log_path.read_text()
             assert 'logout.ogg' in audio_log.read_text()
@@ -301,7 +309,7 @@ else:
             server.send_signal(signal.SIGTERM);server.wait(timeout=5)
             assert server.returncode==0,restart_path.read_text()
         print('PASS: monitor profiles restored and opt-in startup script executed after compositor restart.')
-        print('PASS: private Mako notifications, swaybg, both Wofi launchers with keyboard input, real settings GUI, media-key indicators with mocked hardware, live config reload, and all three sound events with mocked playback.')
+        print('PASS: private Mako notifications, swaybg, native application and Wofi command search with keyboard input, real settings GUI, media-key indicators with mocked hardware, live config reload, and logon/logout/shutdown sound events with mocked playback.')
     finally:
         if server is not None and server.poll() is None:
             server.send_signal(signal.SIGTERM)

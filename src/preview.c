@@ -1,6 +1,8 @@
 #include "preview.h"
 #include "main.h"
 #include "view.h"
+#include "workspace.h"
+#include "layer.h"
 #include "decoration.h"
 #include <cairo.h>
 #include <drm_fourcc.h>
@@ -11,10 +13,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <wlr/render/swapchain.h>
+#include <wlr/render/drm_format_set.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 
-enum { WIDTH=240, HEIGHT=160 };
+enum { WIDTH=480, HEIGHT=300 };
 struct capture {
     struct madway_view *view;
     struct madway_server *server;
@@ -24,6 +27,7 @@ struct capture {
     int x,y;
     pixman_region32_t clip;
     bool content;
+    bool ignore_opacity;
 };
 
 static char *directory(struct madway_server *server)
@@ -102,8 +106,9 @@ static void render_node(struct capture *capture,struct wlr_scene_node *node,int 
         struct wlr_linux_drm_syncobj_surface_v1_state *sync=surface?wlr_linux_drm_syncobj_v1_get_surface_state(surface->surface):NULL;
         struct wlr_color_primaries primaries;
         if (buffer->primaries) wlr_color_primaries_from_named(&primaries,buffer->primaries);
+        float alpha=capture->ignore_opacity?1:buffer->opacity;
         wlr_render_pass_add_texture(capture->pass,&(struct wlr_render_texture_options){.texture=texture,
-            .src_box=buffer->src_box,.dst_box=box,.alpha=&buffer->opacity,.clip=&capture->clip,
+            .src_box=buffer->src_box,.dst_box=box,.alpha=&alpha,.clip=&capture->clip,
             .transform=buffer->transform,.filter_mode=WLR_SCALE_FILTER_BILINEAR,
             .transfer_function=buffer->transfer_function,.primaries=buffer->primaries?&primaries:NULL,
             .color_encoding=buffer->color_encoding,.color_range=buffer->color_range,
@@ -172,10 +177,23 @@ void madway_preview_capture(struct madway_server *server)
     g_free(dir);
     struct madway_view *view;
     wl_list_for_each(view,&server->layout_views,layout_link)
-        if (view->mapped && !view->desktop_overlay && view->workspace==server->active_workspace) capture_view(view,format);
+        if (view->mapped && view->output==madway_workspace_output(server) && !view->desktop_overlay && view->workspace==view->output->workspace) capture_view(view,format);
 }
 
-struct wlr_buffer *madway_window_snapshot(struct madway_view *view)
+void madway_preview_capture_one(struct madway_server *server,uint32_t identity)
+{
+    if (server->locked || server->sleeping || server->shutting_down) return;
+    struct madway_view *view;
+    wl_list_for_each(view,&server->layout_views,layout_link) {
+        if (view->id!=identity || !view->mapped || view->desktop_overlay || !view->output ||
+                view->workspace!=view->output->workspace || !view->output->output->enabled || !view->output->output->swapchain) continue;
+        char *dir=directory(server);
+        if (dir && g_mkdir_with_parents(dir,0700)==0) capture_view(view,&view->output->output->swapchain->format);
+        g_free(dir);return;
+    }
+}
+
+static struct wlr_buffer *window_snapshot(struct madway_view *view,bool alpha)
 {
     struct madway_server *server=view->server;
     if (server->locked || server->sleeping || !view->mapped || !view->output || !view->output->output->swapchain) return NULL;
@@ -185,7 +203,13 @@ struct wlr_buffer *madway_window_snapshot(struct madway_view *view)
     if (width<=0 || height<=0) return NULL;
     double scale=view->output->output->scale;
     int pixels_w=(int)ceil(width*scale),pixels_h=(int)ceil(height*scale);
-    struct wlr_buffer *buffer=wlr_allocator_create_buffer(server->allocator,pixels_w,pixels_h,&view->output->output->swapchain->format);
+    const struct wlr_drm_format *format=&view->output->output->swapchain->format;
+    if(alpha) {
+        const struct wlr_drm_format_set *formats=wlr_renderer_get_texture_formats(server->renderer,server->allocator->buffer_caps);
+        format=formats?wlr_drm_format_set_get(formats,DRM_FORMAT_ARGB8888):NULL;
+        if(!format)return NULL;
+    }
+    struct wlr_buffer *buffer=wlr_allocator_create_buffer(server->allocator,pixels_w,pixels_h,format);
     if (!buffer) return NULL;
     struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(server->renderer,buffer,NULL);
     if (!pass) {wlr_buffer_drop(buffer);return NULL;}
@@ -200,6 +224,9 @@ struct wlr_buffer *madway_window_snapshot(struct madway_view *view)
     if (!rendered || !capture.content) {wlr_buffer_drop(buffer);return NULL;}
     return buffer;
 }
+
+struct wlr_buffer *madway_window_snapshot(struct madway_view *view){return window_snapshot(view,false);}
+struct wlr_buffer *madway_window_snapshot_alpha(struct madway_view *view){return window_snapshot(view,true);}
 
 struct wlr_buffer *madway_scene_snapshot(struct madway_server *server,struct madway_output *output)
 {
@@ -221,5 +248,36 @@ struct wlr_buffer *madway_scene_snapshot(struct madway_server *server,struct mad
     bool rendered=wlr_render_pass_submit(pass);
     pixman_region32_fini(&capture.clip);g_ptr_array_unref(capture.textures);
     if (!rendered) {wlr_buffer_drop(buffer);return NULL;}
+    return buffer;
+}
+
+struct wlr_buffer *madway_layer_snapshot(struct madway_layer *layer)
+{
+    struct madway_server *server=layer->server;
+    if(server->locked || server->sleeping || !layer->mapped)return NULL;
+    struct madway_output *output=NULL,*candidate;
+    wl_list_for_each(candidate,&server->outputs,link)if(candidate->output==layer->surface->output){output=candidate;break;}
+    if(!output || !output->output->enabled || !output->output->swapchain)return NULL;
+    int width=layer->surface->surface->current.width,height=layer->surface->surface->current.height;
+    if(width<=0 || height<=0)return NULL;
+    double scale=output->output->scale;
+    int pixels_w=(int)ceil(width*scale),pixels_h=(int)ceil(height*scale);
+    const struct wlr_drm_format_set *formats=wlr_renderer_get_texture_formats(server->renderer,server->allocator->buffer_caps);
+    const struct wlr_drm_format *format=formats?wlr_drm_format_set_get(formats,DRM_FORMAT_ARGB8888):NULL;
+    if(!format)return NULL;
+    struct wlr_buffer *buffer=wlr_allocator_create_buffer(server->allocator,pixels_w,pixels_h,format);
+    if(!buffer)return NULL;
+    struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(server->renderer,buffer,NULL);
+    if(!pass){wlr_buffer_drop(buffer);return NULL;}
+    struct wlr_scene_tree *tree=layer->scene_layer->tree;
+    struct capture capture={.server=server,.pass=pass,.scale=scale,.x=-(int)lround(tree->node.x*scale),
+        .y=-(int)lround(tree->node.y*scale),.ignore_opacity=true,
+        .textures=g_ptr_array_new_with_free_func((GDestroyNotify)wlr_texture_destroy)};
+    pixman_region32_init_rect(&capture.clip,0,0,pixels_w,pixels_h);
+    wlr_render_pass_add_rect(pass,&(struct wlr_render_rect_options){.box={0,0,pixels_w,pixels_h},.color={0,0,0,0},.blend_mode=WLR_RENDER_BLEND_MODE_NONE});
+    render_node(&capture,&tree->node,0,0);
+    bool rendered=wlr_render_pass_submit(pass);
+    pixman_region32_fini(&capture.clip);g_ptr_array_unref(capture.textures);
+    if(!rendered || !capture.content){wlr_buffer_drop(buffer);return NULL;}
     return buffer;
 }

@@ -1,4 +1,4 @@
-"""Real Waybar, task protocol, SNI tray, dark Eau and screenshots in isolation."""
+"""Real Waybar, task protocol, SNI tray, dark Argent and screenshots in isolation."""
 import configparser
 import json
 import os
@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='madway-features-') as tmp:
     config=root/'config';(config/'madway').mkdir(parents=True)
     ini=config/'madway/settings.ini'
     (config/'user-dirs.dirs').write_text('XDG_PICTURES_DIR="$HOME/Pictures"\n')
-    ini.write_text('[appearance]\ntheme=gershwin-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[wallpaper]\ntype=color\ncolor=#142034\n')
+    ini.write_text('[appearance]\ntheme=argent-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[wallpaper]\ntype=color\ncolor=#142034\n')
     env={**os.environ,'HOME':tmp,'XDG_CONFIG_HOME':str(config),'XDG_DATA_HOME':str(root/'data'),'XDG_CACHE_HOME':str(root/'cache'),
          'XDG_RUNTIME_DIR':str(runtime),'WLR_BACKENDS':'headless','WLR_RENDERER':'pixman','MADWAY_SESSION':'1','GIO_USE_VFS':'local',
          'LIBGL_ALWAYS_SOFTWARE':'1','DBUS_SYSTEM_BUS_ADDRESS':'unix:path='+str(root/'no-system-bus'),'MADWAY_TEST_TRAY_FILE':str(root/'tray')}
@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory(prefix='madway-features-') as tmp:
             '--method','org.freedesktop.DBus.Properties.Get','org.kde.StatusNotifierWatcher','RegisteredStatusNotifierItems'],env=env,text=True)
         assert '/StatusNotifierItem' in registered,registered
         print('PASS: Waybar StatusNotifier watcher registers app and requests its icon/tooltip properties.')
-        time.sleep(.5);grab('gershwin-midnight-dock.png')
+        time.sleep(.5);grab('argent-midnight-dock.png')
         send('screenshot');wait(lambda:any(path.stat().st_size>8 for path in (root/'Pictures/Screenshots').glob('*.png')))
         captures=list((root/'Pictures/Screenshots').glob('*.png'));assert captures[0].read_bytes().startswith(b'\x89PNG')
         wait(lambda:str(captures[0]) in text());time.sleep(.1)
@@ -110,14 +110,14 @@ with tempfile.TemporaryDirectory(prefix='madway-features-') as tmp:
         print('PASS: interrupted screenshot selector is reaped without an orphan or partial file.')
         # Live dark/light and every dock edge must survive layout changes.
         cfg=configparser.ConfigParser(interpolation=None);cfg.read(ini)
-        for theme in ('gershwin','gershwin-dark'):
+        for theme in ('argent','argent-dark'):
             cfg['appearance']['theme']=theme
             for edge in ('top','left','right','bottom'):
                 cfg['dock']={'enabled':'true','position':edge,'icons_only':'true','icon_size':'32','tray':'true'}
                 apply_config()
                 wait(lambda:json.loads((directory/'dock.json').read_text())['position']==edge)
                 assert processes[0].poll() is None
-        grab('gershwin-dock-preview.png')
+        grab('argent-dock-preview.png')
         command('close');wait(lambda:not fixture())
         assert 'CLOSED dock-fixture' in (root/'taskbar.log').read_text()
         assert 'Traceback (most recent call last)' not in text(),text()

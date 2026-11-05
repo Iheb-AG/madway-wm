@@ -29,7 +29,7 @@ the workspace number and expands across the remaining panel space.
 See [window previews and wallpaper slideshows](PREVIEWS_AND_SLIDESHOWS.md) for
 Alt+Tab images, the panel display option, and timed folder/selected-image backgrounds.
 
-Settings → Panel controls the dock's enabled state, edge, icon size, icon-only
+Settings → Dock controls the dock's enabled state, edge, icon size, icon-only
 versus labeled entries, and tray. Every output gets a dock. Maximizing an
 application slides that output's dock out and releases its reserved space.
 Move the pointer to the dock's screen edge to reveal it; it stays while hovered
@@ -40,7 +40,7 @@ The compositor animates the existing Waybar surface using
 `cubic-bezier(.32, 0, .18, 1)`, default duration 240ms, paced by output frames.
 Reversing a transition
 continues from the current position. Slides are clipped to their own monitor.
-Settings → Panel can disable maximized-window hiding, disable animation or
+Settings → Dock can disable maximized-window hiding, disable animation or
 adjust duration (80–500ms). Fullscreen and locking hide the dock immediately.
 Locking covers all layer surfaces and withdraws foreign
 window handles; dock requests cannot activate, resize or close normal windows
@@ -99,16 +99,16 @@ runs at a time.
 Dock labels and other layer-shell popups are constrained to their monitor's
 visible bounds, so bottom and side docks keep tooltips on screen.
 
-## Gershwin Midnight
+## Argent Midnight
 
-Choose **Gershwin · Midnight** under Appearance, or apply the coordinated preset:
+Choose **Argent · Midnight** under Appearance, or apply the coordinated preset:
 
 ```sh
-madway-shell preset gershwin-dark
+madway-shell preset argent-dark
 ```
 
-The preset uses the existing 22px Eau layout, top bar and bottom dock with dark
-charcoal gradients, light text and blue selections. It keeps the local Gershwin
+The preset uses the existing 22px Argent layout, top bar and bottom dock with dark
+charcoal gradients, light text and blue selections. It keeps the optional local
 wallpaper policy; the theme variant alone does not change your wallpaper.
 Close, minimize and maximize glyphs remain white, including hover states.
 Desktop menus, settings, frames, notification colors, launcher and dock follow

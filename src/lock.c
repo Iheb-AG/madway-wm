@@ -2,6 +2,7 @@
 #include "preview.h"
 #include "transition.h"
 #include "main.h"
+#include "effects.h"
 #include "input.h"
 #include "workspace.h"
 #include "view.h"
@@ -162,6 +163,7 @@ void madway_lock_blank(struct madway_server *server)
     struct madway_lock *manager=server->screen_lock;
     if(!manager || server->locked)return;
     server->locked=true;
+    madway_effects_cancel(server);
     madway_transition_finish(server);
     madway_preview_clear(server);
     if(server->interactive_view && !server->interactive_forward_button)server->consumed_button=server->interactive_button;

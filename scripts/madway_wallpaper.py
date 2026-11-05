@@ -54,6 +54,7 @@ class WallpaperController:
         self.timer=0;self.handoff=0;self.signature=None;self.arguments=None
         self.current=None;self.files=[];self.error=''
         self.previous=None;self.previous_arguments=None
+        self.queued=False;self.queued_path=None;self.queue_idle=0;self.closed=False
 
     def state(self):
         try:return json.loads((self.desktop.directory/'desktop.json').read_text())
@@ -78,6 +79,9 @@ class WallpaperController:
         else:self.desktop.terminate('wallpaper-old')
 
     def show(self,path):
+        if self.closed:return
+        if self.handoff:
+            self.queued=True;self.queued_path=path;return
         arguments=['swaybg','-c',self.config.get('wallpaper','color')[1:]]
         if path:arguments+=['-i',str(path),'-m',self.config.get('wallpaper','mode')]
         process=self.desktop.children.get('wallpaper')
@@ -97,19 +101,30 @@ class WallpaperController:
             def ready():
                 if new.poll() is not None:
                     self.desktop.children['wallpaper']=self.desktop.children.pop('wallpaper-old',old)
-                    self.current=self.previous;self.arguments=self.previous_arguments;self.error='New wallpaper could not be displayed';self.handoff=0;self.publish();return False
+                    self.current=self.previous;self.arguments=self.previous_arguments;self.error='New wallpaper could not be displayed';self.finish_handoff();self.publish();return False
                 state=self.state();outputs={item['output'] for item in state.get('backgrounds',[])}
-                mapped={item['output'] for item in state.get('backgrounds',[]) if item['pid']==new.pid}
+                mapped={item['output'] for item in state.get('backgrounds',[]) if item['pid']==new.pid and not item.get('fading',False)}
                 if outputs and outputs<=mapped:
-                    self.desktop.terminate('wallpaper-old');self.handoff=0;return False
+                    self.desktop.terminate('wallpaper-old');self.finish_handoff()
+                    return False
                 if time.monotonic()>=deadline:
                     self.desktop.terminate('wallpaper')
                     self.desktop.children['wallpaper']=self.desktop.children.pop('wallpaper-old',old)
                     self.current=self.previous;self.arguments=self.previous_arguments;self.error='Wallpaper readiness timed out; previous background retained'
-                    self.handoff=0;self.publish();return False
+                    self.finish_handoff();self.publish();return False
                 return True
             self.handoff=self.GLib.timeout_add(50,ready)
         self.publish()
+
+    def finish_handoff(self):
+        self.handoff=0
+        if self.queued:
+            path=self.queued_path;self.queued=False
+            def resume():
+                self.queue_idle=0
+                self.show(path)
+                return False
+            self.queue_idle=self.GLib.idle_add(resume)
 
     def apply(self,config):
         validate(config)
@@ -137,6 +152,8 @@ class WallpaperController:
         return True
 
     def close(self):
+        self.queued=False;self.closed=True
+        if self.queue_idle:self.GLib.source_remove(self.queue_idle);self.queue_idle=0
         if self.timer:self.GLib.source_remove(self.timer);self.timer=0
         self.cancel_handoff()
         (self.desktop.directory/'wallpaper.json').unlink(missing_ok=True)

@@ -25,7 +25,8 @@ with tempfile.TemporaryDirectory(prefix='madway-preview-') as tmp:
     images=root/'slides';images.mkdir();red=images/'01 red.png';blue=images/'02 blue.png'
     png(red,(180,20,20));png(blue,(20,20,180));(images/'invalid.png').write_text('bad image')
     ini=config/'madway/settings.ini'
-    ini.write_text('[appearance]\ntheme=gershwin-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[wallpaper]\ntype=slideshow\nsource=folder\nfolder='+str(images)+'\ninterval=1\n')
+    ini.write_text('[appearance]\ntheme=argent-dark\ntitle_height=22\n[panel]\nheight=22\nmetrics=false\n[notifications]\nenabled=false\n[wallpaper]\ntype=slideshow\nsource=folder\nfolder='+str(images)+'\ninterval=1\n')
+    with ini.open('a') as out:out.write('\n[session_effects]\nopening=false\n')
     flags=subprocess.check_output(['pkg-config','--cflags','--libs','wlroots-0.20','wayland-server','xkbcommon'],text=True).split()
     probe=root/'probe.so'
     subprocess.run(['cc','-shared','-fPIC','-DWLR_USE_UNSTABLE','-Isrc','-Ibuild/protocols','tests/dock_probe.c','-o',str(probe),*flags,'-ldl'],check=True)
@@ -89,6 +90,30 @@ with tempfile.TemporaryDirectory(prefix='madway-preview-') as tmp:
             spawn(title,['kitty','--config','NONE','--title',title,'-o','linux_display_server=wayland','-o','background='+color,'-o','confirm_os_window_close=0','/bin/sh','-c','sleep 120'])
         wait(lambda:len(state().get('windows',[]))==3)
         rows={row['title']:row for row in state()['windows']}
+        # Panel hover requests capture a fresh single window without opening Alt+Tab.
+        target=rows['dock-fixture']['id'];send('window-preview',id=target)
+        wait(lambda:next(row for row in state()['windows'] if row['id']==target).get('preview'))
+        assert not state().get('switcher')
+        assert pixel(directory/'previews'/f'{target}.png')[0]>80
+        print('PASS: on-demand panel thumbnail captures one real client without opening the switcher.')
+        for row in rows.values():send('window-floating',id=row['id'])
+        wait(lambda:all(not row['floating'] for row in state()['windows']))
+        focused=rows['dock-three']['id'];send('switcher-select',id=focused)
+        wait(lambda:next(row for row in state()['windows'] if row['id']==focused)['focused'])
+        before=[row['id'] for row in state()['windows']];target=before[0] if before[0]!=focused else before[1]
+        expected=before.copy();a=expected.index(focused);b=expected.index(target);expected[a],expected[b]=expected[b],expected[a]
+        send('tile-swap',id=target);wait(lambda:[row['id'] for row in state()['windows']]==expected)
+        assert next(row for row in state()['windows'] if row['id']==focused)['focused']
+        command(47);wait(lambda:state()['windows'][0]['id']==focused)
+        assert len(state()['windows'])==3,'Make-master shortcut launched a terminal'
+        # A floating target must not enter the tiled order through a swap request.
+        send('window-floating',id=target);wait(lambda:next(row for row in state()['windows'] if row['id']==target)['floating'])
+        send('switcher-select',id=focused);time.sleep(.1);before=[row['id'] for row in state()['windows']]
+        send('tile-swap',id=target);time.sleep(.1);assert [row['id'] for row in state()['windows']]==before
+        for row in state()['windows']:
+            if not row['floating']:send('window-floating',id=row['id'])
+        wait(lambda:all(row['floating'] for row in state()['windows']))
+        print('PASS: tile swaps preserve focus, Alt+Shift+Enter promotes the master, and floating targets are rejected.')
         identity=rows['dock-three']['id'];send('switcher-select',id=identity);send('window-minimize')
         wait(lambda:any(row['id']==identity and row['minimized'] for row in state()['windows']))
         command(11);wait(lambda:state().get('switcher'))
@@ -147,11 +172,11 @@ def inspect_settings():
    for widget in grid.get_children():
     if isinstance(widget,Gtk.Label) and widget.get_text()==label:return grid.get_child_at(1,grid.child_get_property(widget,'top-attach'))
    raise AssertionError(label)
-  field('Appearance','Background').set_active_id('slideshow')
-  enabled=field('Appearance','Enable slideshow');assert enabled.get_active()
-  field('Appearance','Slideshow source').set_active_id('files')
-  field('Appearance','Change image every (seconds)').set_value(3)
-  selection=field('Appearance','Slideshow images')
+  field('Wallpaper','Background').set_active_id('slideshow')
+  enabled=field('Wallpaper','Enable slideshow');assert enabled.get_active()
+  field('Wallpaper','Slideshow source').set_active_id('files')
+  field('Wallpaper','Change image every (seconds)').set_value(3)
+  selection=field('Wallpaper','Slideshow images')
   next(w for w in walk(selection) if isinstance(w,Gtk.Button) and w.get_label()=='Clear').clicked()
   next(w for w in walk(selection) if isinstance(w,Gtk.Button) and w.get_label()=='Add images…').clicked()
   assert len(next(w for w in walk(selection) if isinstance(w,Gtk.ListBox)).get_children())==2
@@ -161,14 +186,14 @@ def inspect_settings():
   assert json.loads(cfg.get('wallpaper','images'))==IMAGES
   enabled.set_active(False);apply.clicked();cfg.read(shell['CONFIG'])
   assert not cfg.getboolean('wallpaper','slideshow_enabled') and json.loads(cfg.get('wallpaper','images'))==IMAGES
-  assert not field('Appearance','Preview slideshow').get_sensitive()
+  assert not field('Wallpaper','Preview slideshow').get_sensitive()
   enabled.set_active(True);apply.clicked();cfg.read(shell['CONFIG']);assert cfg.getboolean('wallpaper','slideshow_enabled')
-  field('Appearance','Slideshow source').set_active_id('folder')
-  next(w for w in walk(field('Appearance','Slideshow folder')) if isinstance(w,Gtk.Entry)).set_text(FOLDER)
+  field('Wallpaper','Slideshow source').set_active_id('folder')
+  next(w for w in walk(field('Wallpaper','Slideshow folder')) if isinstance(w,Gtk.Entry)).set_text(FOLDER)
   apply.clicked();cfg.read(shell['CONFIG']);assert cfg.get('wallpaper','source')=='folder' and cfg.get('wallpaper','folder')==FOLDER
  except BaseException as error:errors.append(error)
  window.destroy();return False
-GLib.timeout_add(250,inspect_settings);shell['settings_window']('Appearance')
+GLib.timeout_add(250,inspect_settings);shell['settings_window']('Wallpaper')
 if errors:raise errors[0]
 '''.replace('SCRIPT',repr(str(repo/'scripts/madway-panel'))).replace('IMAGES',repr([str(red),str(blue)])).replace('FOLDER',repr(str(images))))
         subprocess.run(['python3',str(ui)],env=env,check=True,timeout=8)

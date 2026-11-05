@@ -22,6 +22,7 @@ class Timers:
     def timeout_add(self,delay,callback):
         self.serial+=1;self.active[self.serial]=(delay,callback);return self.serial
     def timeout_add_seconds(self,delay,callback):return self.timeout_add(delay*1000,callback)
+    def idle_add(self,callback):return self.timeout_add(0,callback)
     def source_remove(self,source):self.active.pop(source,None)
     def fire(self,source):
         callback=self.active[source][1]
@@ -73,6 +74,8 @@ with tempfile.TemporaryDirectory(prefix='madway-wallpaper-unit-') as tmp:
     state=root/'desktop.json'
     state.write_text(json.dumps(dict(backgrounds=[dict(pid=old.pid,output='first'),dict(pid=old.pid,output='second'),dict(pid=new.pid,output='first')])))
     desktop.GLib.fire(controller.handoff);assert old.poll() is None,'Retired wallpaper before all monitors mapped'
+    state.write_text(json.dumps(dict(backgrounds=[dict(pid=new.pid,output='first',fading=True),dict(pid=new.pid,output='second')])))
+    desktop.GLib.fire(controller.handoff);assert old.poll() is None,'Retired wallpaper before its fade finished'
     state.write_text(json.dumps(dict(backgrounds=[dict(pid=new.pid,output='first'),dict(pid=new.pid,output='second')])))
     desktop.GLib.fire(controller.handoff);assert old.poll()==0 and not controller.handoff
     # The explicit switch pauses rotation without discarding the selection/image.
@@ -92,8 +95,13 @@ with tempfile.TemporaryDirectory(prefix='madway-wallpaper-unit-') as tmp:
     a.unlink();b.unlink();calls=len(desktop.calls);controller.next();assert len(desktop.calls)==calls
     state.write_text('{}');controller.next();assert controller.current is None and controller.error
     assert '-i' not in desktop.calls[-1]
-    # Rapid settings changes cancel a pending handoff and preserve the valid old process.
+    # Rapid changes queue only the latest selection behind the current crossfade.
     plain=configparser.ConfigParser(interpolation=None);plain.read_dict(defaults);plain['wallpaper']['color']='#112233'
-    controller.apply(plain);assert controller.timer==0 and '-i' not in desktop.calls[-1]
+    incoming=desktop.children['wallpaper'];previous=desktop.children['wallpaper-old'];calls=len(desktop.calls)
+    controller.apply(plain);assert controller.timer==0 and controller.queued and len(desktop.calls)==calls
+    state.write_text(json.dumps(dict(backgrounds=[dict(pid=incoming.pid,output='first'),dict(pid=incoming.pid,output='second')])))
+    desktop.GLib.fire(controller.handoff);assert previous.poll()==0
+    idle=next(source for source,(delay,callback) in desktop.GLib.active.items() if delay==0)
+    desktop.GLib.fire(idle);assert len(desktop.calls)==calls+1 and '-i' not in desktop.calls[-1] and '#112233'[1:] in desktop.calls[-1]
     controller.close();assert not desktop.GLib.active
 print('PASS: folder/files, invalid images, order/deduplication, interval validation, retained background until all outputs map, failed handoff, pause/fallback and cleanup.')

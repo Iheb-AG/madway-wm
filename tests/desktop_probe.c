@@ -26,6 +26,7 @@ static bool keyboard_live, pointer_live;
 static struct wl_listener backend_destroy;
 static struct wl_event_source *timer;
 static int stage, ticks;
+static int timed_stage=-1;
 static struct wlr_backend *headless;
 static struct wlr_output *hotplug_output;
 static struct madway_view *previous_view;
@@ -111,7 +112,10 @@ static bool type_step(void) {
     key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_PRESSED);key(KEY_ENTER,WL_KEYBOARD_KEY_STATE_RELEASED);return true;
 }
 static int run_stage(void *data) {
-    (void)data;assert(++ticks<1200);
+    (void)data;
+    // Bound a stalled step, not the total time spent in external GTK checks.
+    if(stage!=timed_stage){ticks=0;timed_stage=stage;}
+    assert(++ticks<1200);
     if(stage==0) {
         const char *ready=getenv("MADWAY_LAUNCH_TEST_READY");
         if(ready&&access(ready,F_OK)==0) {shortcut(KEY_D,true);stage=1;}
@@ -184,12 +188,21 @@ static int run_stage(void *data) {
         assert(headless!=NULL);
         hotplug_output=wlr_headless_add_output(headless,800,600);
         assert(hotplug_output!=NULL);
+        // Monitor-local focus can legitimately be empty after disabling/re-enabling
+        // an empty output. Find the fixture explicitly before moving it.
+        struct madway_view *target=NULL,*entry;
+        wl_list_for_each(entry,&server->views,link)
+            if(entry->mapped && entry->toplevel->title && !strcmp(entry->toplevel->title,"floating-fixture"))target=entry;
+        assert(target!=NULL);
         struct madway_output *output;
         wl_list_for_each(output,&server->outputs,link)
             if(output->output==hotplug_output) {
-                server->focused_view->output=output;
-                wlr_scene_node_set_position(&server->focused_view->scene_tree->node,output->layout_x+16,output->layout_y+16);
+                target->output=output;target->workspace=output->workspace;
+                wlr_scene_node_set_position(&target->scene_tree->node,output->layout_x+16,output->layout_y+16);
             }
+        feature_motion(target->scene_tree->node.x+100,target->scene_tree->node.y+8);
+        feature_button(BTN_LEFT,true);feature_button(BTN_LEFT,false);
+        assert(server->focused_view==target);
         stage=14;
     } else if(stage==14 && access(getenv("MADWAY_TEST_HOTPLUG"),F_OK)!=0) {
         wlr_output_destroy(hotplug_output);

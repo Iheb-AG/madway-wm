@@ -201,11 +201,14 @@ if errors:raise AssertionError('Menu page test failed') from errors[0]
 print('ALL PANEL DROPDOWN PAGES PASS',flush=True)
 
 # Cascades keep each menu's natural height, including above a bottom panel.
-for theme in ('black','gershwin','gershwin-dark'):
+for theme in ('black','argent','argent-dark'):
     cfg=api['api']['settings']();cfg['appearance']['theme']=theme
+    cfg['panel']['height']='18' if theme=='black' else '22'
     themed=Gtk.CssProvider();themed.load_from_data(api['api']['theme_style'](api['CSS'].decode(),cfg).encode())
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(),themed,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1)
     for edge in ('top','bottom','left','right'):
+        themed_bar=api['TopBar']();themed_bar.config=cfg;themed_bar.argent=theme!='black'
+        themed_bar.config['panel']['position']=edge;themed_bar.rebuild()
         bounds=Gdk.Display.get_default().get_monitor(0).get_geometry()
         menu=api['DesktopMenu'](bounds.x+22,bounds.y+(bounds.height-22 if edge=='bottom' else 22),'Desktop','',edge)
         root_height=[]
@@ -213,6 +216,19 @@ for theme in ('black','gershwin','gershwin-dark'):
             try:
                 height=menu.box.get_allocated_height()
                 if stage==0:
+                    for instance in themed_bar.bars:
+                        assert instance['session'].get_visible() and instance['session'].get_image() is not None
+                        box=instance['workspace'].get_parent();padding=box.get_style_context().get_padding(Gtk.StateFlags.NORMAL)
+                        first=next(child for child in box.get_children() if child.get_visible()).get_allocation()
+                        last=instance['session'].get_allocation()
+                        if edge in ('top','bottom'):
+                            assert padding.left==padding.right==10 and first.x>=10
+                            assert last.x+last.width<=instance['window'].get_allocated_width()-10
+                        else:
+                            assert padding.top==padding.bottom==10 and first.y>=10
+                            assert last.y+last.height<=instance['window'].get_allocated_height()-10
+                        instance['session'].clicked()
+                        assert messages[-1][0]=='panel-menu' and messages[-1][1]['page']=='Session'
                     root_height.append(height);menu.open_submenu('Applications')
                 else:
                     assert height==root_height[0],(theme,edge,stage,height,root_height)
@@ -235,6 +251,8 @@ for theme in ('black','gershwin','gershwin-dark'):
                 errors.append(error);menu.window.destroy()
             return False
         GLib.timeout_add(100,check);Gtk.main()
+        for instance in themed_bar.bars:instance['window'].destroy()
+        themed_bar.bars.clear()
     # Long Bluetooth/app names must not collide with mute/default controls or sliders.
     audio_rows[0][1][0]['label']='Bluetooth headphones — very long device name ' * 4
     menu=api['DesktopMenu'](20,30,'Audio')
@@ -242,13 +260,16 @@ for theme in ('black','gershwin','gershwin-dark'):
         try:
             assert menu.window.get_allocated_width()<=bounds.width
             for slider,_,mute,_,default in menu.mixer.rows.values():
-                card=slider.get_parent();label,line,scale=card.get_children()
-                a,b,c=(widget.get_allocation() for widget in (label,line,scale))
-                assert a.y+a.height<=b.y and b.y+b.height<=c.y,(theme,a,b,c)
+                line=slider.get_parent();card=line.get_parent();header=card.get_children()[0]
+                a,b=(widget.get_allocation() for widget in (header,line))
+                assert a.y+a.height<=b.y,(theme,a,b)
+                scale,value=line.get_children()
+                s,v=scale.get_allocation(),value.get_allocation()
+                assert not scale.get_draw_value() and s.x+s.width<=v.x and v.width>=38,(theme,s,v)
                 if default:
                     d,m=default.get_allocation(),mute.get_allocation()
                     assert d.x+d.width<=m.x,(theme,d,m)
-            if theme=='gershwin-dark':
+            if theme=='argent-dark':
                 import subprocess
                 subprocess.run(['grim',str(Path(__file__).resolve().parent.parent/'build/audio-midnight-preview.png')],check=True)
         except BaseException as error:errors.append(error)
@@ -256,5 +277,27 @@ for theme in ('black','gershwin','gershwin-dark'):
     GLib.timeout_add(200,inspect_audio);Gtk.main()
     Gtk.StyleContext.remove_provider_for_screen(Gdk.Screen.get_default(),themed)
 if errors:raise AssertionError('Cascade sizing regression') from errors[0]
-print('BLACK AND EAU FOUR EDGE CASCADE HEIGHT AND SHRINK PASS',flush=True)
+print('BLACK AND ARGENT FOUR EDGE CASCADE HEIGHT AND SHRINK PASS',flush=True)
+print('THREE THEME FOUR EDGE PANEL INSETS AND DEDICATED SESSION BUTTON PASS',flush=True)
+
+# Session controls route directly; power actions open their own confirmation.
+for native in (False,True):
+    from unittest.mock import patch
+    for label,expected,values in [('Lock screen','lock',{}),('Log out…','session-confirm',{'operation':'logout'}),
+            ('Sleep','sleep',{}),('Restart computer…','session-confirm',{'operation':'reboot'}),
+            ('Shut down computer…','session-confirm',{'operation':'poweroff'})]:
+        with patch.dict(scope['os'].environ,MADWAY_NATIVE='1' if native else '0'):
+            menu=api['DesktopMenu'](20,22,'Session')
+            def session_action():
+                try:
+                    widget=next(child for child in menu.box.get_children() if isinstance(child,Gtk.Button) and child.get_label()==label)
+                    if label=='Sleep' and not native:
+                        assert not widget.get_sensitive();menu.window.destroy()
+                    else:
+                        widget.clicked();assert messages[-1]==(expected,values),messages[-1]
+                except BaseException as error:errors.append(error);menu.window.destroy()
+                return False
+            GLib.timeout_add(60,session_action);Gtk.main()
+if errors:raise AssertionError('Session control routing failed') from errors[0]
+print('SESSION LOCK SLEEP LOGOUT AND POWER CONFIRMATION ROUTING PASS',flush=True)
 fixture.cleanup()

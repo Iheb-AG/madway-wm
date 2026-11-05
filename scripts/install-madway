@@ -72,7 +72,7 @@ if [[ -z $destdir && $EUID -ne 0 ]]; then elevate=(sudo); fi
 if [[ $install_deps == true ]]; then
     command -v pacman >/dev/null || { echo '--deps supports Arch/CachyOS; on other distributions install the README dependencies first.' >&2; exit 1; }
     run "${elevate[@]}" pacman -S --needed base-devel cmake pkgconf wlroots0.20 wayland wayland-protocols libxkbcommon pango glib2 libinput \
-        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg swaylock konsole waybar slurp wl-clipboard xdg-user-dirs wireplumber libnotify pipewire pipewire-pulse libpulse brightnessctl grim
+        python python-gobject gtk3 gtk-layer-shell dbus mako wofi swaybg swaylock konsole waybar slurp wl-clipboard xdg-user-dirs wireplumber libnotify pipewire pipewire-pulse libpulse brightnessctl grim networkmanager nm-connection-editor blueman bluez-utils
     if [[ $build_demoscene == true ]]; then run "${elevate[@]}" pacman -S --needed glfw git; fi
 fi
 if [[ $dry_run == false ]]; then

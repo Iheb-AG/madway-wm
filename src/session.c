@@ -81,6 +81,8 @@ void madway_session_reload(struct madway_server *server)
         .master_percent = 50, .repeat_rate = 25, .repeat_delay = 600, .default_floating = true,
         .dock_autohide=true,.dock_animate=true,.dock_animation_ms=240,
         .tap=true,.tap_drag=true,.dwt=true,.accel_profile="default",.click_method="default",
+        .workspace_swipe=true,.swipe_threshold=120,
+        .effects_animate=true,.wallpaper_fade_ms=650,.launcher_animation_ms=240,.close_animate=true,.close_animation_ms=240,
         .workspace_animate=true,.workspace_animation_ms=420,.window_animate=true,.window_animation_ms=360};
     if (g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
     {
@@ -88,6 +90,9 @@ void madway_session_reload(struct madway_server *server)
             {"touchpad","tap",&server->config.tap},{"touchpad","tap_drag",&server->config.tap_drag},
             {"touchpad","drag_lock",&server->config.drag_lock},{"touchpad","disable_while_typing",&server->config.dwt},
             {"touchpad","natural_scroll",&server->config.touchpad_natural},{"mouse","natural_scroll",&server->config.mouse_natural},
+            {"touchpad","workspace_swipe",&server->config.workspace_swipe},{"touchpad","swipe_invert",&server->config.swipe_invert},
+            {"motion","effects",&server->config.effects_animate},
+            {"windows","close_animate",&server->config.close_animate},
             {"mouse","left_handed",&server->config.left_handed},{"mouse","middle_emulation",&server->config.middle_emulation},
             {"workspaces","animate",&server->config.workspace_animate},{"windows","animate",&server->config.window_animate}};
         for (size_t i=0;i<G_N_ELEMENTS(options);++i)
@@ -110,7 +115,11 @@ void madway_session_reload(struct madway_server *server)
             g_free(value);
         }
         if (g_key_file_has_key(file,"workspaces","animation_ms",NULL)) server->config.workspace_animation_ms=CLAMP(g_key_file_get_integer(file,"workspaces","animation_ms",NULL),80,500);
+        if (g_key_file_has_key(file,"touchpad","swipe_threshold",NULL)) server->config.swipe_threshold=CLAMP(g_key_file_get_integer(file,"touchpad","swipe_threshold",NULL),30,600);
+        if(g_key_file_has_key(file,"motion","wallpaper_fade_ms",NULL))server->config.wallpaper_fade_ms=CLAMP(g_key_file_get_integer(file,"motion","wallpaper_fade_ms",NULL),100,2000);
+        if(g_key_file_has_key(file,"motion","launcher_ms",NULL))server->config.launcher_animation_ms=CLAMP(g_key_file_get_integer(file,"motion","launcher_ms",NULL),80,600);
         if (g_key_file_has_key(file,"windows","animation_ms",NULL)) server->config.window_animation_ms=CLAMP(g_key_file_get_integer(file,"windows","animation_ms",NULL),80,500);
+        if(g_key_file_has_key(file,"windows","close_ms",NULL))server->config.close_animation_ms=CLAMP(g_key_file_get_integer(file,"windows","close_ms",NULL),80,500);
         if (g_key_file_has_key(file,"dock","autohide",NULL)) server->config.dock_autohide=g_key_file_get_boolean(file,"dock","autohide",NULL);
         if (g_key_file_has_key(file,"dock","animate",NULL)) server->config.dock_animate=g_key_file_get_boolean(file,"dock","animate",NULL);
         if (g_key_file_has_key(file,"dock","animation_ms",NULL)) server->config.dock_animation_ms=CLAMP(g_key_file_get_integer(file,"dock","animation_ms",NULL),80,500);
@@ -146,6 +155,22 @@ void madway_session_reload(struct madway_server *server)
     server->config.lid_auto = lid != NULL && strcmp(lid,"auto")==0;
     g_free(lid);
     madway_theme_load(&server->config, theme);
+    server->config.custom_colors=g_key_file_get_boolean(file,"appearance","custom_colors",NULL);
+    char *font=g_key_file_get_string(file,"appearance","font",NULL);
+    if(font)g_strlcpy(server->config.font,font,sizeof(server->config.font));
+    g_free(font);
+    server->config.title_font_size=CLAMP(g_key_file_get_integer(file,"appearance","title_font_size",NULL),0,18);
+    if(server->config.custom_colors) {
+        const char *keys[]={"surface","active","text","muted","border","accent"};
+        float *values[]={server->config.surface,server->config.active,server->config.text,server->config.muted,server->config.border,server->config.accent};
+        for(size_t i=0;i<G_N_ELEMENTS(keys);++i) {
+            char *hex=g_key_file_get_string(file,"colors",keys[i],NULL);
+            bool valid=hex && strlen(hex)==7 && hex[0]=='#';
+            for(int j=1;valid && j<7;++j)valid=g_ascii_isxdigit(hex[j]);
+            if(valid)for(int j=0;j<3;++j)values[i][j]=(float)(16*g_ascii_xdigit_value(hex[1+2*j])+g_ascii_xdigit_value(hex[2+2*j]))/255.f;
+            g_free(hex);
+        }
+    }
     g_free(theme);
     g_key_file_unref(file);
     g_free(path);
@@ -256,7 +281,26 @@ static int handle_control(int fd, uint32_t mask, void *data)
         }
         if(server->locked)continue;
         unsigned workspace, identity;
-        if (sscanf(command, "workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
+        char output_name[128];
+        if(sscanf(command,"output %127s",output_name)==1) {
+            struct madway_output *output;
+            wl_list_for_each(output,&server->outputs,link)if(output->output->enabled && !strcmp(output->output->name,output_name)) {
+                madway_workspace_activate_output(server,output);madway_workspace_focus(server);break;
+            }
+        }
+        else if(sscanf(command,"activate %u",&identity)==1) {
+            struct madway_view *view;
+            wl_list_for_each(view,&server->views,link)if(view->id==identity && view->mapped) {
+                madway_workspace_switch_output(server,view->output,view->workspace);madway_focus_view(server,view);break;
+            }
+        }
+        else if(sscanf(command,"workspace %u %127s",&workspace,output_name)==2) {
+            struct madway_output *output;
+            wl_list_for_each(output,&server->outputs,link)if(!strcmp(output->output->name,output_name)) {
+                madway_workspace_switch_output(server,output,workspace);break;
+            }
+        }
+        else if (sscanf(command, "workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
             madway_workspace_switch(server, workspace);
         else if (sscanf(command, "move-workspace %u", &workspace) == 1 && workspace < MADWAY_WORKSPACE_COUNT)
         {
@@ -266,7 +310,7 @@ static int handle_control(int fd, uint32_t mask, void *data)
         {
             struct madway_view *target;
             wl_list_for_each(target, &server->layout_views, layout_link)
-                if (target->id == identity && target->mapped && target->workspace == server->active_workspace)
+                if (target->id == identity && target->mapped && target->output && target->workspace==target->output->workspace)
                 { madway_focus_view(server, target); break; }
             server->switcher_active = false;
             madway_session_publish_state(server);
@@ -275,12 +319,18 @@ static int handle_control(int fd, uint32_t mask, void *data)
         {
             struct madway_view *target;
             wl_list_for_each(target, &server->layout_views, layout_link)
-                if (target->id == identity && target->mapped && target->workspace == server->active_workspace) {
+                if (target->id == identity && target->mapped && target->output && target->workspace==target->output->workspace) {
                     if (target == server->focused_view && !target->minimized) madway_set_minimized(target,true);
                     else madway_focus_view(server,target);
                     break;
                 }
         }
+        else if (sscanf(command,"preview %u",&identity)==1) {
+            madway_preview_capture_one(server,identity);
+            madway_session_publish_state(server);
+        }
+        else if (sscanf(command,"swap-tile %u",&identity)==1)
+            madway_swap_tile(server,identity);
         else if (g_str_has_prefix(command, "tile "))
             madway_move_tile(server, command + 5);
         else if (strcmp(command, "focus-settings") == 0)
@@ -288,7 +338,7 @@ static int handle_control(int fd, uint32_t mask, void *data)
             struct madway_view *view;
             wl_list_for_each(view, &server->views, link)
                 if (view->mapped && g_strcmp0(view->toplevel->app_id, "org.madway.Settings") == 0)
-                { madway_workspace_switch(server, view->workspace); madway_focus_view(server, view); break; }
+                { madway_workspace_switch_output(server,view->output,view->workspace); madway_focus_view(server, view); break; }
         }
         else if (strcmp(command, "above") == 0 && server->focused_view != NULL)
             madway_set_keep_above(server->focused_view, !server->focused_view->keep_above);
@@ -350,6 +400,7 @@ void madway_session_publish_state(struct madway_server *server)
 {
     if (server->shutting_down || server->socket_name == NULL) return;
     madway_taskbar_sync(server);
+    struct madway_output *active=madway_workspace_output(server);
     GString *text = g_string_new(NULL);
     g_string_append_printf(text, "{\"workspace\":%u,\"title\":", server->active_workspace);
     struct madway_view *view = server->locked?NULL:server->focused_view;
@@ -363,30 +414,50 @@ void madway_session_publish_state(struct madway_server *server)
             server->locked?"true":"false",madway_lock_ready(server)?"true":"false",(int)madway_lock_client_pid(server),madway_lock_request_serial(server));
     g_string_append_printf(text, ",\"has_window\":%s,\"switcher\":%s,\"windows\":[",
             view != NULL && madway_view_visible(view) ? "true" : "false", server->switcher_active ? "true" : "false");
-    bool first = true;
     struct madway_view *entry;
-    wl_list_for_each(entry, &server->layout_views, layout_link)
-        if (!server->locked && entry->mapped && entry->workspace == server->active_workspace && !entry->desktop_overlay)
-        {
-            g_string_append_printf(text, "%s{\"id\":%u,\"focused\":%s,\"title\":", first ? "" : ",", entry->id,
-                    entry == server->focused_view ? "true" : "false");
-            append_json_string(text, entry->toplevel->title);
-            g_string_append(text, ",\"app_id\":");
-            append_json_string(text, entry->toplevel->app_id);
-            g_string_append_printf(text, ",\"preview\":%u,\"minimized\":%s}", entry->preview_serial, entry->minimized ? "true" : "false");first = false;
+    for(int list=0;list<2;++list) {
+        bool first=true;
+        wl_list_for_each(entry,&server->layout_views,layout_link) {
+            bool current=entry->output && entry->workspace==entry->output->workspace;
+            if(server->locked || !entry->mapped || entry->desktop_overlay || (!list && (!current || entry->output!=active)))continue;
+            g_string_append_printf(text,"%s{\"id\":%u,\"focused\":%s,\"title\":",first?"":",",entry->id,entry==server->focused_view?"true":"false");
+            append_json_string(text,entry->toplevel->title);
+            g_string_append(text,",\"app_id\":");append_json_string(text,entry->toplevel->app_id);
+            g_string_append(text,",\"output\":");append_json_string(text,entry->output?entry->output->output->name:"");
+            g_string_append_printf(text,",\"workspace\":%u,\"visible_workspace\":%s,\"preview\":%u,\"minimized\":%s,\"floating\":%s,\"maximized\":%s,\"fullscreen\":%s}",
+                entry->workspace,current?"true":"false",entry->preview_serial,entry->minimized?"true":"false",
+                entry->floating?"true":"false",entry->maximized?"true":"false",entry->fullscreen?"true":"false");first=false;
         }
+        if(!list)g_string_append(text,"],\"all_windows\":[");
+    }
+    g_string_append(text,"],\"output_workspaces\":[");
+    bool first_output=true;
+    struct madway_output *output;
+    wl_list_for_each(output,&server->outputs,link) {
+        if(!output->output->enabled)continue;
+        g_string_append_printf(text,"%s{\"name\":",first_output?"":",");first_output=false;
+        append_json_string(text,output->output->name);
+        g_string_append_printf(text,",\"x\":%d,\"y\":%d,\"workspace\":%u,\"title\":",output->layout_x,output->layout_y,output->workspace);
+        struct madway_view *focused=NULL;
+        wl_list_for_each(entry,&server->views,link)
+            if(entry->output==output && madway_view_visible(entry) && !entry->desktop_overlay &&
+                (!focused || entry==server->focused_view || entry->id==output->workspace_focus[output->workspace]))focused=entry;
+        append_json_string(text,focused?focused->toplevel->title:"");
+        g_string_append(text,",\"app_id\":");append_json_string(text,focused?focused->toplevel->app_id:"");
+        g_string_append_c(text,'}');
+    }
     g_string_append(text,"],\"backgrounds\":[");
-    struct madway_layer *layer;first=true;
+    struct madway_layer *layer;bool first=true;
     wl_list_for_each(layer,&server->layers,link) {
         if (!layer->mapped || !layer->surface->output->enabled || strcmp(layer->surface->namespace,"wallpaper")) continue;
         pid_t pid;wl_client_get_credentials(wl_resource_get_client(layer->surface->resource),&pid,NULL,NULL);
         g_string_append_printf(text,"%s{\"pid\":%d,\"output\":",first?"":",",(int)pid);
-        append_json_string(text,layer->surface->output->name);g_string_append_c(text,'}');first=false;
+        append_json_string(text,layer->surface->output->name);g_string_append_printf(text,",\"fading\":%s}",layer->effect_active?"true":"false");first=false;
     }
-    g_string_append_printf(text, "],\"keep_above\":%s,\"output_x\":%d,\"output_y\":%d}\n",
+    g_string_append_printf(text, "],\"keep_above\":%s,\"output_x\":%d,\"output_y\":%d,\"pointer_x\":%.0f,\"pointer_y\":%.0f}\n",
             view != NULL && view->keep_above ? "true" : "false",
-            view != NULL && view->output != NULL ? view->output->layout_x : 0,
-            view != NULL && view->output != NULL ? view->output->layout_y : 0);
+            active?active->layout_x:0,
+            active?active->layout_y:0,server->cursor?server->cursor->x:0,server->cursor?server->cursor->y:0);
     char *path = session_path(server, "desktop.json");
     g_file_set_contents(path, text->str, (gssize)text->len, NULL);
     g_free(path); g_string_free(text, true);

@@ -41,7 +41,7 @@ set input.focus_follows_mouse true
     except ValueError as error:assert 'Line 2:' in str(error)
     else:raise AssertionError('Partial script accepted')
 profiles=api['api']['themes']()
-assert set(profiles.sections())=={'gershwin','gershwin-dark','black','amber','terminal','slate','paper'}
+assert set(profiles.sections())=={'argent','argent-dark','black','amber','terminal','slate','paper'}
 for name in profiles:
     if name=='DEFAULT':continue
     cfg=api['api']['settings']();cfg['appearance']['theme']=name
