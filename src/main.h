@@ -33,6 +33,9 @@ struct madway_server
     struct wlr_allocator *allocator; // Allocates pixel buffers that the renderer and backend can use
     struct wlr_scene *scene; // Root of the tree describing everything we display
     struct wlr_scene_tree *desktop_tree;
+    struct wlr_scene_tree *startup_tree;
+    struct wl_event_source *startup_timeout;
+    bool startup_pending,startup_handoff_requested;
     struct madway_lock *screen_lock;
     bool locked;
     struct wlr_scene_tree *backgrounds; // Bottom layer, below application windows
@@ -126,6 +129,7 @@ struct madway_output
     struct madway_server *server;
     struct wlr_output *output;
     struct wlr_scene_output *scene_output; // The part of the scene displayed by this output
+    struct wlr_scene_rect *startup_cover;
     struct wlr_scene_rect *background; // Persistent black rectangle for this output
     struct madway_lock_output *lock_data;
     struct wlr_box usable_area;

@@ -517,6 +517,7 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
         switch(symbol) {
         case XKB_KEY_XF86AudioRaiseVolume:madway_session_action(server,"volume-up");return true;
         case XKB_KEY_XF86AudioLowerVolume:madway_session_action(server,"volume-down");return true;
+        case XKB_KEY_XF86AudioMicMute:madway_session_action(server,"microphone-mute");return true;
         case XKB_KEY_XF86AudioMute:madway_session_action(server,"volume-mute");return true;
         case XKB_KEY_XF86MonBrightnessUp:madway_session_action(server,"brightness-up");return true;
         case XKB_KEY_XF86MonBrightnessDown:madway_session_action(server,"brightness-down");return true;
@@ -546,6 +547,7 @@ static bool handle_shortcut(struct madway_server *server, struct wlr_keyboard_ke
         return true;
     case XKB_KEY_XF86AudioRaiseVolume: madway_session_action(server, "volume-up"); return true;
     case XKB_KEY_XF86AudioLowerVolume: madway_session_action(server, "volume-down"); return true;
+    case XKB_KEY_XF86AudioMicMute: madway_session_action(server, "microphone-mute"); return true;
     case XKB_KEY_XF86AudioMute: madway_session_action(server, "volume-mute"); return true;
     case XKB_KEY_XF86MonBrightnessUp: madway_session_action(server, "brightness-up"); return true;
     case XKB_KEY_XF86MonBrightnessDown: madway_session_action(server, "brightness-down"); return true;

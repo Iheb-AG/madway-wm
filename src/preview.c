@@ -281,3 +281,49 @@ struct wlr_buffer *madway_layer_snapshot(struct madway_layer *layer)
     if(!rendered || !capture.content){wlr_buffer_drop(buffer);return NULL;}
     return buffer;
 }
+
+/* Capture the ready desktop under the startup cover, at bounded resolution.
+ * Reuse the private preview directory and remove each image after handoff. */
+void madway_preview_opening(struct madway_server *server)
+{
+    if (!server->startup_pending || server->locked || server->sleeping) return;
+    char *dir=directory(server);
+    if (!dir || g_mkdir_with_parents(dir,0700)!=0) {g_free(dir);return;}
+    struct madway_output *output;
+    wl_list_for_each(output,&server->outputs,link) {
+        if (!output->output->enabled || !output->output->swapchain) continue;
+        int width,height;wlr_output_effective_resolution(output->output,&width,&height);
+        if (width<=0 || height<=0) continue;
+        double scale=fmin(1.,1600./fmax(width,height));
+        int pw=(int)ceil(width*scale),ph=(int)ceil(height*scale);
+        struct wlr_buffer *buffer=wlr_allocator_create_buffer(server->allocator,pw,ph,&output->output->swapchain->format);
+        if (!buffer) continue;
+        struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(server->renderer,buffer,NULL);
+        if (!pass) {wlr_buffer_drop(buffer);continue;}
+        struct capture capture={.server=server,.pass=pass,.scale=scale,
+            .x=-(int)lround(output->layout_x*scale),.y=-(int)lround(output->layout_y*scale),
+            .textures=g_ptr_array_new_with_free_func((GDestroyNotify)wlr_texture_destroy)};
+        pixman_region32_init_rect(&capture.clip,0,0,pw,ph);
+        wlr_render_pass_add_rect(pass,&(struct wlr_render_rect_options){.box={0,0,pw,ph},.color={0,0,0,1},.blend_mode=WLR_RENDER_BLEND_MODE_NONE});
+        render_node(&capture,&server->desktop_tree->node,0,0);
+        bool rendered=wlr_render_pass_submit(pass);
+        pixman_region32_fini(&capture.clip);g_ptr_array_unref(capture.textures);
+        struct wlr_texture *texture=rendered?wlr_texture_from_buffer(server->renderer,buffer):NULL;
+        if (texture) {
+            cairo_surface_t *image=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,pw,ph);
+            if (cairo_surface_status(image)==CAIRO_STATUS_SUCCESS && wlr_texture_read_pixels(texture,&(struct wlr_texture_read_pixels_options){
+                    .data=cairo_image_surface_get_data(image),.format=DRM_FORMAT_ARGB8888,.stride=(uint32_t)cairo_image_surface_get_stride(image)})) {
+                cairo_surface_mark_dirty(image);
+                char *key=g_compute_checksum_for_string(G_CHECKSUM_SHA256,output->output->name,-1);
+                char *path=g_strdup_printf("%s/opening-%s.png",dir,key);g_free(key);
+                char *temp=g_strconcat(path,".tmp",NULL);
+                int fd=g_open(temp,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
+                if (fd>=0) {close(fd);if (cairo_surface_write_to_png(image,temp)==CAIRO_STATUS_SUCCESS) g_rename(temp,path);g_unlink(temp);}
+                g_free(temp);g_free(path);
+            }
+            cairo_surface_destroy(image);wlr_texture_destroy(texture);
+        }
+        wlr_buffer_drop(buffer);
+    }
+    g_free(dir);
+}

@@ -7,6 +7,7 @@
 #include "layer.h"
 #include "power.h"
 #include "lock.h"
+#include "startup.h"
 #include "transition.h"
 #include <glib.h>
 #include <glib/gstdio.h>
@@ -120,6 +121,7 @@ void madway_arrange_outputs(struct madway_server *server)
         wlr_scene_rect_set_size(output->background, width, height);
         wlr_output_layout_add(server->output_layout, output->output, output->layout_x, output->layout_y);
     }
+    madway_startup_arrange(server);
     madway_arrange_layers(server);
     madway_workspace_arrange(server);
     struct madway_view *view;

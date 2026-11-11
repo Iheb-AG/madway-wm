@@ -16,3 +16,5 @@ window.session-dialog { background: transparent; border: 0; padding: 0; }
 .menu calendar:selected { background: @active@; color: @selection_text@; }
 .menu calendar:indeterminate { color: @muted@; }
 .menu button:hover label, .menu button:focus label { color: @selection_text@; }
+
+window.task-preview-window { background: @surface@; color: @text@; border: 1px solid @border@; border-radius: 6px; }

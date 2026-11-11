@@ -16,7 +16,10 @@ repo=Path(__file__).resolve().parent.parent
 with tempfile.TemporaryDirectory(prefix='madway-exit-integration-') as tmp:
     root=Path(tmp);runtime=root/'runtime';runtime.mkdir(mode=0o700);config=root/'config';(config/'madway').mkdir(parents=True)
     ini=config/'madway/settings.ini';ini.write_text('[appearance]\ntheme=argent-dark\n[dock]\nenabled=false\n[desktop]\nicons=false\n[notifications]\nenabled=false\n[panel]\nmetrics=false\n[wallpaper]\ntype=color\ncolor=#131820\n[session_effects]\nopening=true\nopening_ms=300\nmode=fade\nshader=crt\nduration_ms=300\n[output:HEADLESS-1]\nmode=800x600@100000\nx=0\ny=0\n[output:HEADLESS-2]\nmode=800x600@60000\nx=800\ny=0\n')
+    if os.environ.get('MADWAY_TEST_OPENING_SHADER'):
+        ini.write_text(ini.read_text().replace('mode=fade','mode=shader').replace('shader=crt','shader=vortex'))
     binaries=root/'bin';binaries.mkdir();calls=root/'requests'
+    pulse=binaries/'pactl';pulse.write_text('#!'+sys.executable+'\nimport sys\nprint("[]")\n');pulse.chmod(0o700)
     stub=binaries/'systemctl';stub.write_text('#!'+sys.executable+'\nimport sys\nfrom pathlib import Path\nwith Path('+repr(str(calls))+').open("a") as output:output.write(sys.argv[-1]+"\\n")\nprint("mock power request rejected",file=sys.stderr)\nsys.exit(1)\n');stub.chmod(0o700)
     audio_log=root/'audio.jsonl';power_log=root/'power.jsonl'
     sound=root/'tone.ogg';sound.write_bytes(b'mock audio')
@@ -42,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='madway-exit-integration-') as tmp:
                 time.sleep(.02)
             raise AssertionError(text())
         try:
-            wait(lambda:'desktop services ready' in text());env['WAYLAND_DISPLAY']=re.search(r'Listening on WAYLAND_DISPLAY=(\S+)',text())[1]
+            wait(lambda:'Listening on WAYLAND_DISPLAY=' in text());env['WAYLAND_DISPLAY']=re.search(r'Listening on WAYLAND_DISPLAY=(\S+)',text())[1]
             directory=runtime/('madway-'+env['WAYLAND_DISPLAY'])
             def send(name,**values):
                 with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as channel:channel.sendto(json.dumps(dict(action=name,**values)).encode(),str(directory/'control.sock'))
@@ -50,9 +53,20 @@ with tempfile.TemporaryDirectory(prefix='madway-exit-integration-') as tmp:
             def center(output):
                 path=root/'frame.png';subprocess.run(['grim','-o',output,str(path)],env=env,check=True,stdout=subprocess.DEVNULL)
                 image=GdkPixbuf.Pixbuf.new_from_file(str(path));i=(image.get_height()//2)*image.get_rowstride()+image.get_width()//2*image.get_n_channels();return tuple(image.get_pixels()[i:i+3])
+            wait(lambda:'First scene frame committed' in text())
+            initial=[]
+            def covered_until_opening():
+                if 'session opening started at' in text():return True
+                frame=center('HEADLESS-1')
+                if 'session opening started at' not in text():initial.append(frame)
+                return False
+            wait(covered_until_opening)
+            assert initial and all(max(frame)<=9 for frame in initial),('Desktop flashed before opening',initial)
+            wait(lambda:'Opening cover handed off' in text())
             wait(lambda:text().count('Desktop layer mapped: madway-panel')==2)
             def audio():return [json.loads(line) for line in audio_log.read_text().splitlines()] if audio_log.exists() else []
             wait(lambda:len(audio())>=2)
+            if os.environ.get('MADWAY_TEST_OPENING_SHADER'):assert 'session shader ready: vortex' in text(),text()
             opening_start=float(re.search(r'session opening started at ([0-9.]+)',text())[1])
             assert 0<=audio()[0]['time']-opening_start<.35
             wait(lambda:center('HEADLESS-1')==(19,24,32))
@@ -76,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix='madway-exit-integration-') as tmp:
             assert 'Traceback' not in text(),text()
             send('logout');assert server.wait(timeout=8)==0,text()
             assert len(read_calls())==before
-            print('PASS: opening/exit sounds begin with animation, playback overlaps visuals without replay, and simple fade and all three shaders render across 100/60 Hz outputs, duplicate exit requests collapse to one, mocked rejected power actions restore both desktops, previews perform no system action, and shader logout terminates only the private compositor.')
+            print('PASS: desktop stays covered before opening, then opening/exit sounds begin with animation, playback overlaps visuals without replay, and simple fade and all three shaders render across 100/60 Hz outputs, duplicate exit requests collapse to one, mocked rejected power actions restore both desktops, previews perform no system action, and shader logout terminates only the private compositor.')
         finally:
             server.terminate()
             try:server.wait(timeout=6)

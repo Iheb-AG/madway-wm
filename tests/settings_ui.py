@@ -28,7 +28,7 @@ def inspect_settings():
         names = {stack.child_get_property(page, "name") for page in stack.get_children()}
         assert names == set(module["SETTINGS_PAGES"]), names
         grids=[widget for widget in children(stack) if isinstance(widget,Gtk.Grid)]
-        assert all(grid.get_row_spacing()==9 for grid in grids if grid.get_parent().get_parent() in stack.get_children())
+        assert all(grid.get_row_spacing()==7 for grid in grids if grid.get_parent().get_parent() in stack.get_children())
         assert window.settings_browser.list.get_children()
         for name in names:
             stack.set_visible_child_name(name)

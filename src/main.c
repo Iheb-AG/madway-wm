@@ -5,6 +5,7 @@
 #include "workspace.h"
 #include "layer.h"
 #include "session.h"
+#include "startup.h"
 #include "monitors.h"
 #include "power.h"
 #include "lock.h"
@@ -157,6 +158,7 @@ static void handle_output_destroy(struct wl_listener *listener, void *data)
         wlr_output_layout_remove(server->output_layout, output->output);
     }
     wlr_scene_node_destroy(&output->background->node);
+    if (output->startup_cover) wlr_scene_node_destroy(&output->startup_cover->node);
     // wlroots destroys the scene-output viewport when its wlr_output is destroyed.
     free(output);
     madway_arrange_outputs(server);
@@ -288,7 +290,7 @@ static int handle_child_exit(int signal_number, void *data)
     struct madway_server *server = data;
     pid_t pid;
     while ((pid = waitpid(-1, NULL, WNOHANG)) > 0)
-        if (pid == server->session_pid) server->session_pid = 0;
+        if (pid == server->session_pid) {server->session_pid = 0;madway_startup_release(server);}
     return 0;
 }
 
@@ -400,7 +402,7 @@ int main(int argc, char *argv[])
     server.output_layout = wlr_output_layout_create(server.display);
     if (server.output_layout == NULL ||
         wlr_xdg_output_manager_v1_create(server.display, server.output_layout) == NULL ||
-        !madway_init_input(&server) || !madway_init_layers(&server) || !madway_init_monitors(&server) || !madway_lock_init(&server) || !madway_taskbar_init(&server))
+        !madway_init_input(&server) || !madway_init_layers(&server) || !madway_init_monitors(&server) || !madway_startup_init(&server) || !madway_lock_init(&server) || !madway_taskbar_init(&server))
     {
         wlr_log(WLR_ERROR, "Could not initialize input handling");
         goto cleanup;
@@ -440,6 +442,7 @@ int main(int argc, char *argv[])
 
     // cleanup
 cleanup:
+    madway_startup_finish(&server);
     madway_close_cancel(&server,NULL);
     madway_transition_finish(&server);
     madway_effects_cancel(&server);

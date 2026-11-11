@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory() as tmp:
     def terminate(key):
         process=children.pop(key,None)
         if process:process.code=-15
-    desktop=SimpleNamespace(config=config,GLib=clock,children=children,directory=root,spawn=spawn,terminate=terminate,
+    desktop=SimpleNamespace(config=config,GLib=clock,children=children,directory=root,spawn=spawn,terminate=terminate,prepare_exit_audio=lambda ready:ready(),restore_exit_audio=lambda:None,compositor=lambda command:None,
         finish_session_operation=lambda operation:calls.append(operation),notify=lambda *args:notes.append(args),sound=lambda *args:None)
     controller=module['SessionExitController'](desktop)
     controller.begin('reboot');token=controller.token
@@ -56,4 +56,24 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not controller.operation and 'session-exit' not in children
     before=len(calls);controller.preview('shader','iris',700)
     assert '--preview' in spawns[-1][1] and len(calls)==before;controller.close()
+    config['session_effects']['mode']='none';desktop.finish_session_operation=lambda operation:calls.append(operation)
+    (root/'desktop.json').write_text('{"all_windows":[{"id":1}]}');before=len(calls)
+    controller.begin('logout');assert controller.operation and len(calls)==before
+    controller.clients_deadline=0;controller.poll();assert not controller.operation and len(calls)==before
+    (root/'desktop.json').write_text('{}')
+    # Opening never reveals early, ignores stale epochs and releases on failures.
+    config['motion']['effects']='true';config['session_effects']['mode']='fade';config['session_effects']['opening']='true'
+    handoffs=[];events=[];desktop.compositor=handoffs.append;desktop.sound=events.append
+    controller.opening('startup');token=controller.opening_token
+    controller.opening_started('stale');assert not handoffs and not events
+    controller.opening_started(token);controller.opening_started(token)
+    assert handoffs==['opening-handoff'] and events==['startup']
+    controller.opening('logon');controller.opening_process.code=1
+    for callback in list(clock.sources.values()):callback()
+    assert handoffs[-1]=='opening-ready' and events==['startup','logon']
+    before=len(events);controller.opening('logon');controller.opening_process.code=77
+    for callback in list(clock.sources.values()):callback()
+    assert len(events)==before and controller.opening_token is None
+    config['session_effects']['opening']='false';controller.opening('logon')
+    assert events[-1]=='logon' and handoffs[-1]=='opening-ready'
 print('PASS: single exit operation, stale-token rejection, cancellation/reaper race, renderer failure/watchdog fallback, lock cancellation, disabled effects, bounded durations, rejected-action recovery and harmless previews.')

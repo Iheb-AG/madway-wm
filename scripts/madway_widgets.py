@@ -1,5 +1,7 @@
-"""Window preview tooltips and centered, palette-aware session confirmations."""
+"""Window preview popups and centered, palette-aware session confirmations."""
 import json
+import math
+import cairo
 from pathlib import Path
 import time
 import gi
@@ -9,41 +11,110 @@ gi.require_version('GdkPixbuf','2.0')
 from gi.repository import Gtk,Gdk,GdkPixbuf,GLib,GtkLayerShell as Layer
 
 
+def task_click(button,enabled=True):
+    """A frame-clock icon press/rebound, with no change to task-button geometry."""
+    image=button.get_image()
+    if not enabled or not image:return
+    previous=getattr(button,'click_tick',0)
+    if previous:button.remove_tick_callback(previous)
+    size=getattr(button,'click_size',image.get_pixel_size());button.click_size=size
+    origin=image.get_pixel_size();opacity=image.get_opacity();image.set_size_request(size,size)
+    start=GLib.get_monotonic_time()
+    def frame(widget,clock):
+        progress=min(1,max(0,(clock.get_frame_time()-start)/180000))
+        pulse=math.sin(math.pi*progress)
+        image.set_pixel_size(max(size-3,round(origin+(size-origin)*progress-3*pulse)))
+        image.set_opacity(opacity+(1-opacity)*progress-.15*pulse)
+        if progress>=1:button.click_tick=0;return False
+        return True
+    button.click_tick=button.add_tick_callback(frame)
+
+
 class TaskPreview:
-    def __init__(self,widget,identity,directory,send):
-        self.widget=widget;self.identity=identity;self.directory=directory;self.send=send;self.last=0
-        self.box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=6,margin=7)
-        self.box.get_style_context().add_class('task-preview')
-        self.image=Gtk.Image();self.image.set_size_request(240,135);self.box.add(self.image)
-        self.title=Gtk.Label(max_width_chars=34);self.title.set_ellipsize(3);self.box.add(self.title)
-        widget.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK)
-        widget.connect('enter-notify-event',self.prefetch);widget.connect('query-tooltip',self.query)
-        widget.connect('destroy',lambda *a:self.box.destroy())
-        widget.set_has_tooltip(True)
+    """A noninteractive layer popup, independent of global GTK tooltip settings."""
+    def __init__(self,widget,identity,directory,send,bar=None):
+        self.widget=widget;self.identity=identity;self.directory=directory;self.send=send;self.bar=bar
+        self.window=None;self.delay=0;self.timer=0;self.last=0;self.signature=None
+        widget.set_has_tooltip(False)
+        widget.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK|Gdk.EventMask.LEAVE_NOTIFY_MASK)
+        widget.connect('enter-notify-event',self.enter);widget.connect('leave-notify-event',self.leave)
+        widget.connect('button-press-event',self.leave);widget.connect('unmap',self.leave);widget.connect('destroy',self.leave)
+
     def row(self):
         try:
             state=json.loads((self.directory()/'desktop.json').read_text())
             if state.get('locked') or state.get('sleeping'):return None
-            return next((row for row in state.get('all_windows',state.get('windows',[])) if row['id']==self.identity and row.get('visible_workspace',True)),None)
+            rows=state.get('all_windows',state.get('windows',[]))
+            row=next((row for row in rows if row['id']==self.identity and row.get('visible_workspace',True)),None)
+            if row and any(other.get('fullscreen') and not other.get('minimized') and other.get('visible_workspace',True) and other.get('output')==row.get('output') for other in rows):return None
+            return row
         except (OSError,ValueError):return None
+
     def prefetch(self,*args):
-        if self.row() and time.monotonic()-self.last>.4:
+        if self.row() and time.monotonic()-self.last>.5:
             self.last=time.monotonic();self.send('window-preview',id=self.identity)
         return False
-    def query(self,widget,x,y,keyboard,tooltip):
+
+    def enter(self,widget,event):
+        if event.detail==Gdk.NotifyType.INFERIOR:return False
+        self.prefetch()
+        if not self.delay and not self.window:self.delay=GLib.timeout_add(280,self.show)
+        return False
+
+    def leave(self,*args):
+        if len(args)>1 and isinstance(args[1],Gdk.EventCrossing) and args[1].detail==Gdk.NotifyType.INFERIOR:return False
+        if self.delay:GLib.source_remove(self.delay);self.delay=0
+        if self.timer:GLib.source_remove(self.timer);self.timer=0
+        if self.window:self.window.destroy();self.window=None
+        return False
+
+    def show(self):
+        self.delay=0
+        if not self.widget.get_mapped() or not self.row():return False
+        parent=self.widget.get_toplevel();display=parent.get_display()
+        monitor=self.bar['monitor'] if self.bar else display.get_monitor_at_window(parent.get_window())
+        bounds=monitor.get_geometry();width=min(254,max(80,bounds.width-12));height=min(178,max(60,bounds.height-12))
+        self.window=Gtk.Window();self.window.set_decorated(False);self.window.set_resizable(False)
+        self.window.get_style_context().add_class('task-preview-window')
+        Layer.init_for_window(self.window);Layer.set_namespace(self.window,'madway-task-preview')
+        Layer.set_monitor(self.window,monitor);Layer.set_layer(self.window,Layer.Layer.OVERLAY)
+        Layer.set_keyboard_mode(self.window,Layer.KeyboardMode.NONE);Layer.set_exclusive_zone(self.window,-1)
+        for edge in (Layer.Edge.TOP,Layer.Edge.LEFT):Layer.set_anchor(self.window,edge,True)
+        x,y=self.widget.translate_coordinates(parent,0,0) or (0,0)
+        position=self.bar['position'] if self.bar else 'top'
+        if position=='bottom':y=bounds.height-parent.get_allocated_height()-height-4
+        elif position=='right':x=bounds.width-parent.get_allocated_width()-width-4
+        elif position=='left':x=parent.get_allocated_width()+4
+        else:y=parent.get_allocated_height()+4
+        if position in ('top','bottom'):x+=self.widget.get_allocated_width()/2-width/2
+        else:y+=self.widget.get_allocated_height()/2-height/2
+        Layer.set_margin(self.window,Layer.Edge.LEFT,int(max(6,min(bounds.width-width-6,x))))
+        Layer.set_margin(self.window,Layer.Edge.TOP,int(max(6,min(bounds.height-height-6,y))))
+        box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5,margin=6)
+        box.get_style_context().add_class('task-preview');self.window.add(box)
+        self.image=Gtk.Image();self.image.set_size_request(width-14,height-35);box.pack_start(self.image,True,True,0)
+        self.title=Gtk.Label(max_width_chars=32);self.title.set_ellipsize(3);box.pack_start(self.title,False,False,0)
+        self.window.connect('realize',lambda w:w.get_window().input_shape_combine_region(cairo.Region(),0,0))
+        self.signature=None
+        if not self.refresh() or self.window is None:return False
+        self.window.show_all();self.timer=GLib.timeout_add(100,self.refresh)
+        return False
+
+    def refresh(self):
         row=self.row()
-        if not row:return False
-        if keyboard:self.prefetch()
-        scale=widget.get_scale_factor()
-        try:
-            if not row.get('preview'):raise ValueError('No snapshot')
-            pixbuf=GdkPixbuf.Pixbuf.new_from_file_at_scale(str(self.directory()/'previews'/f'{self.identity}.png'),240*scale,135*scale,True)
-            self.image.set_from_surface(Gdk.cairo_surface_create_from_pixbuf(pixbuf,scale,None))
-        except (GLib.Error,OSError,ValueError):
-            self.image.set_from_icon_name('application-x-executable',Gtk.IconSize.DIALOG)
-        self.title.set_text(('Restore · ' if row.get('minimized') else '')+(row.get('title') or 'Untitled'))
-        # GTK owns the tooltip, so place the custom widget in it only on demand.
-        tooltip.set_custom(self.box);self.box.show_all();return True
+        if not row or not self.widget.get_mapped():self.leave();return False
+        self.prefetch();scale=self.widget.get_scale_factor()
+        signature=(row.get('preview',0),row.get('title'),row.get('minimized'))
+        if signature!=self.signature:
+            self.signature=signature
+            try:
+                if not row.get('preview'):raise ValueError('No snapshot')
+                width,height=self.image.get_size_request()
+                pixbuf=GdkPixbuf.Pixbuf.new_from_file_at_scale(str(self.directory()/'previews'/f'{self.identity}.png'),width*scale,height*scale,True)
+                self.image.set_from_surface(Gdk.cairo_surface_create_from_pixbuf(pixbuf,scale,None))
+            except (GLib.Error,OSError,ValueError):self.image.set_from_icon_name('application-x-executable',Gtk.IconSize.DIALOG)
+            self.title.set_text(('Restore · ' if row.get('minimized') else '')+(row.get('title') or 'Untitled'))
+        return True
 
 
 class SessionConfirmation:

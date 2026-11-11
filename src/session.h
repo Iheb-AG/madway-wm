@@ -7,6 +7,7 @@ struct madway_server;
 
 struct madway_config {
     int title_height, tile_gap, master_percent;
+    int windows_style; // 1: Luna-inspired, 2: Aero-inspired
     int repeat_rate, repeat_delay;
     int dock_animation_ms;
     bool dock_autohide, dock_animate;

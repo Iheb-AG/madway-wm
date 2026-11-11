@@ -18,6 +18,7 @@ from gi.repository import GdkPixbuf
 
 api = runpy.run_path(str(Path(__file__).resolve().with_name('madway-shell')))
 widgets = runpy.run_path(str(Path(__file__).resolve().with_name('madway_widgets.py')))
+applications = runpy.run_path(str(Path(__file__).resolve().with_name('madway_apps.py')))
 action = api['action']
 settings = api['settings']
 runtime_directory = api['runtime_directory']
@@ -238,12 +239,12 @@ class TopBar:
                 for identity, title, app_id, hidden, focused in signature:
                     mode=self.config.get('panel','tasks')
                     name=app_id.removeprefix('org.').split('.')[-1] or title
-                    try:app=Gio.DesktopAppInfo.new(app_id+'.desktop') if app_id else None
-                    except (TypeError,GLib.Error):app=None
+                    app=applications['resolve'](app_id)
                     if app:name=app.get_display_name()
                     widget = Gtk.Button(label='' if mode=='icons' else name)
                     label=widget.get_child()
                     label.set_ellipsize(3);label.set_max_width_chars(20)
+                    widget.get_style_context().add_class('application-task')
                     icon=app.get_icon() if app else Gio.ThemedIcon.new('application-x-executable')
                     image=Gtk.Image.new_from_gicon(icon or Gio.ThemedIcon.new('application-x-executable'),Gtk.IconSize.MENU)
                     image.set_pixel_size(16)
@@ -254,8 +255,11 @@ class TopBar:
                     if focused:widget.get_style_context().add_class('selected')
                     widget.set_tooltip_text(('Restore ' if hidden else 'Minimize ' if focused else 'Focus ')+title+' · Scroll for more applications')
                     if self.config.getboolean('panel','previews'):
-                        widget.preview=widgets['TaskPreview'](widget,identity,runtime_directory,send)
-                    widget.connect('clicked', lambda widget, identity=identity:send('taskbar-toggle', id=identity))
+                        widget.preview=widgets['TaskPreview'](widget,identity,runtime_directory,send,bar)
+                    def activate_task(widget,identity=identity):
+                        widgets['task_click'](widget,self.config.getboolean('motion','effects'))
+                        send('taskbar-toggle',id=identity)
+                    widget.connect('clicked',activate_task)
                     def context(widget,event,identity=identity,entry=bar):
                         if event.button!=3:return False
                         bounds=entry['monitor'].get_geometry();window=entry['window']
@@ -893,10 +897,11 @@ class MediaIndicator:
         now=time.monotonic();self.visual=self.current(now);self.origin=self.visual
         self.target=0. if data.get('muted') else float(data['value']);self.started=now
         self.serial=data['serial'];self.deadline=now+1.3
-        muted=data.get('muted');volume=data['kind']=='volume'
+        muted=data.get('muted');volume=data['kind']=='volume';microphone=data['kind']=='microphone'
         self.icon.set_from_icon_name('audio-volume-muted-symbolic' if muted else 'audio-volume-high-symbolic' if volume else 'display-brightness-symbolic',Gtk.IconSize.DIALOG)
-        self.label.set_text('Muted' if muted else 'Volume' if volume else 'Display brightness')
-        self.value.set_text('…' if data.get('pending') else str(data['value'])+'%')
+        if microphone:self.icon.set_from_icon_name('microphone-sensitivity-muted-symbolic' if muted else 'audio-input-microphone-symbolic',Gtk.IconSize.DIALOG)
+        self.label.set_text('Microphone' if microphone else 'Muted' if muted else 'Volume' if volume else 'Display brightness')
+        self.value.set_text('…' if data.get('pending') else ('Off' if muted else 'On') if microphone else str(data['value'])+'%')
         if not self.config.getboolean('motion','effects'):self.visual=self.target;self.canvas.queue_draw()
         elif not self.tick_id:self.tick_id=self.canvas.add_tick_callback(self.tick)
 

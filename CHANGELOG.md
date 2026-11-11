@@ -2,11 +2,35 @@
 
 ## Unreleased
 
+- Keep only the approved Argent panel/dock outline removal; revert Studio icons,
+  utility glyphs, placement and finish. Retire preview activation, retain legacy rollback.
+- Add Windows XP/Luna and Vista/Aero profiles with native Cairo title bars,
+  right-side controls, panel/dock styling and optional coordinated layouts.
+- Handle the standard microphone Fn key with serialized default-input mute and
+  immediate microphone feedback. Animate panel task clicks and window activation.
+- Isolate application playback during exit, request graceful client closure and
+  cancel on unsaved-work/refusing clients. Restore changed mute states on failure
+  or cancellation; keep the session sound exempt and concurrent with visuals.
+- Add four BSD-licensed GPUImage2 shader adaptations, pinned provenance and notices.
+  The rejected GL Transitions collection is not included.
+- Flatten Settings buttons and check inputs; show all categories in one source
+  list, with compact spacing and a subtle selection rail.
+
+- Cover outputs from the first desktop frame until the startup reveal is ready,
+  synchronize startup/logon sound with that reveal, and capture opening shaders
+  underneath the cover instead of flashing the desktop first.
+- Match Settings navigation to the main window background and align group labels.
+- Replace taskbar GTK tooltips with timed, noninteractive window-image popups on
+  all panel edges, including snapshot refresh and lock/sleep cleanup.
+- Add Microphone and Camera settings: input mute/volume, ports, card profiles,
+  active recording-stream routing, a memory-only level meter and local camera
+  preview, with capture stopped on navigation, locking and sleep.
+
 - Start session audio at the visual animation epoch and wait for audio and visuals
   concurrently, with no replay at shutdown. Add a matching startup/logon reveal,
   opening preview/duration, and a Settings window fade/zoom.
-- Replace Settings' two-axis tabs with one grouped source list. Restore theme-aware
-  beveled buttons, pill switches, inset fields and compact aligned form controls.
+- Replace Settings' two-axis tabs with one grouped source list. Use theme-aware
+  compact controls, integrated fields and square check inputs.
 - Add Event horizon, Prismatic fold, Liquid lens, Ember dissolve, Mechanical shutter
   and Aurora veil shaders, including lensing, refraction, perspective folds,
   fractal noise and lit aperture geometry. Preserve exact start/end frames.

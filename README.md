@@ -20,13 +20,17 @@ window previews, animations, laptop power management and screen locking.
 
 These are real captures from isolated test sessions with temporary homes and
 fixture content. See [screenshot details and regeneration](docs/screenshots/README.md).
+Windows XP (Luna-inspired) and Windows Vista (Aero-inspired) profiles are available
+in Settings → Appearance, alongside Argent Silver/Midnight. The Studio experiment
+has been retired; the approved panel/dock outline removal remains.
+
 Konsole is the default terminal; the workstation capture uses Kitty as another
 native Wayland client.
 
 ## What works
 
-- **Customization:** a single searchable settings sidebar with expandable groups,
-  sectioned forms, themed switches/buttons, and separate sound preferences.
+- **Customization:** a single searchable settings sidebar with all categories visible,
+  sectioned forms, flat buttons and square check inputs, and separate sound preferences.
   Appearance controls cover themes/colors, typography, icons, wallpaper, animations,
   panel widgets, dock contents and desktop icons.
   The dock editor adds/removes/reorders installed applications. Display settings
@@ -53,7 +57,7 @@ native Wayland client.
   with configurable cubic Bézier animations.
   Wallpaper changes crossfade; search fades/slides, and warm media indicators
   appear immediately with animated volume/brightness bars and background hardware control.
-  Logout, restart and shutdown offer a simple fade or nine custom shaders,
+  Logout, restart and shutdown offer a simple fade or thirteen shaders,
   synchronized sound, and a matching opening reveal. Duration controls and safe
   previews are under Appearance → Session effects.
 - **Desktop utilities:** native Spotlight application search with faint inline
@@ -253,10 +257,30 @@ use Logon. A nested preview uses Logon and does not consume the boot marker.
 If an older personal configuration has only a startup file, a neighboring
 `login`/`logon` audio file is picked up when available. Empty sound fields stay silent.
 
+Settings → **Input → Microphone** provides microphone selection, input mute and
+volume, ports, sound-card profiles, a live level meter and per-application recording
+routes. Use **Use for meetings** to set the selected input as default; existing
+meetings can be rerouted under **Applications currently recording**. If no input
+appears, select a duplex/input sound-card profile and refresh. Browser meetings
+also need permission for microphone/camera access in the site settings.
+
+**Input → Camera** lists capture devices and offers an explicit local preview.
+The microphone meter needs `parec` (`libpulse` on Arch or `pulseaudio-utils` on
+Debian-family distributions). Camera preview needs GStreamer, its base/good
+plugins and Gst/GstVideo introspection bindings. Tests/previews save no media and
+stop when their page closes, the session locks or the machine sleeps. Opening
+Settings does not activate the microphone or camera.
+
+The standard microphone Fn key (`XF86AudioMicMute` / `KEY_MICMUTE`) toggles the
+default recording device and shows its state.
+
 The audio menu lists output/input devices and active playback/recording streams,
 with volume, mute and default-device controls. Silent applications may have no
 stream to show. In a nested session, audio and brightness controls affect the
-host hardware. The confirmed power-off action shuts down the whole computer.
+host hardware. The confirmed power-off action shuts down the whole computer. Confirmed exit
+actions request applications to close and temporarily quiet their playback while
+the session sound plays. An application that refuses to close cancels the exit;
+previous stream mute state is restored on cancellation or a failed power request.
 
 | Guide | Details |
 | --- | --- |
@@ -329,7 +353,7 @@ its `.c` file.
 | --- | --- |
 | `src/main.c` | Display/socket startup, outputs, scene rendering, commit recovery and shutdown |
 | `src/view.c`, `src/window.c` | XDG application lifecycle, geometry, fullscreen/maximize and constraints |
-| `src/decoration.c`, `src/argent.c`, `src/theme.c` | Frames, cached titles, Argent chrome and shared theme data |
+| `src/decoration.c`, `src/argent.c`, `src/windows_theme.c`, `src/theme.c` | Frames, cached titles, Argent chrome and shared theme data |
 | `src/input.c`, `src/devices.c`, `src/gestures.c`, `src/drag.c` | Seat/input routing, shortcuts, device preferences, touchpad gestures and native drags |
 | `src/workspace.c`, `src/monitors.c` | Tiling, workspaces, output layouts and persistent monitor profiles |
 | `src/layer.c`, `src/taskbar.c`, `src/dock.c` | Desktop layers, foreign-toplevel controls and dock visibility |

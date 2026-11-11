@@ -1,6 +1,8 @@
 """Frame-clock session overlays, with bounded snapshots and a software fade fallback."""
 from concurrent.futures import ThreadPoolExecutor
 import json
+import hashlib
+import socket
 import math
 import os
 from pathlib import Path
@@ -31,7 +33,7 @@ def ease(progress):
 
 class ExitPane:
     def __init__(self,owner,monitor,snapshot):
-        self.owner=owner;self.renderer=None;self.ready=False;self.fallback=False;self.snapshot=snapshot;self.tick=0
+        self.owner=owner;self.painted=False;self.frames=0;self.renderer=None;self.ready=False;self.fallback=False;self.snapshot=snapshot;self.tick=0
         self.window=Gtk.Window();self.window.set_decorated(False);self.window.get_style_context().add_class('exit-overlay')
         visual=self.window.get_screen().get_rgba_visual()
         if visual:self.window.set_visual(visual)
@@ -82,6 +84,8 @@ class ExitPane:
                 self.owner.maybe_start()
             scale=area.get_scale_factor()
             self.renderer.draw(self.owner.progress,area.get_allocated_width()*scale,area.get_allocated_height()*scale)
+            self.painted=True
+            if self.owner.started is None:GLib.idle_add(self.owner.maybe_start)
         except Exception as error:GLib.idle_add(self.use_fallback,str(error))
         return True
 
@@ -97,10 +101,14 @@ class ExitPane:
         if self.snapshot:
             cr.save();cr.scale(widget.get_allocated_width()/self.snapshot.get_width(),widget.get_allocated_height()/self.snapshot.get_height())
             Gdk.cairo_set_source_pixbuf(cr,self.snapshot,0,0);cr.paint();cr.restore()
-        cr.set_source_rgba(.018,.024,.033,p);cr.paint();return False
+        cr.set_source_rgba(.018,.024,.033,p);cr.paint();self.painted=True
+        if self.owner.started is None:GLib.idle_add(self.owner.maybe_start)
+        return False
 
     def frame(self,widget,clock):
         if self.owner.closed:return False
+        self.frames+=1
+        self.owner.maybe_start()
         self.owner.advance(clock.get_frame_time()/1e6)
         self.label.set_opacity(ease((self.owner.progress-.55)/.45))
         if isinstance(self.canvas,Gtk.GLArea):self.canvas.queue_render()
@@ -133,8 +141,38 @@ class ExitOverlay:
         for monitor in monitors:
             box=monitor.get_geometry();output=next((row for row in outputs if row.get('enabled') and row.get('x')==box.x and row.get('y')==box.y),None)
             self.targets.append((monitor,output,min(1.,1600/max(1,box.width,box.height))))
-        if args.mode=='shader':threading.Thread(target=self.capture,daemon=True).start()
+        if args.opening and not args.preview:
+            self.prepare_deadline=time.monotonic()+2
+            GLib.timeout_add(25,self.prepare_opening)
+        elif args.mode=='shader':threading.Thread(target=self.capture,daemon=True).start()
         else:self.build([None]*len(monitors))
+
+    def prepare_opening(self):
+        if self.closed:return False
+        try:state=json.loads((self.directory/'desktop.json').read_text())
+        except (OSError,ValueError):state={}
+        ready={row['output'] for row in state.get('backgrounds',[]) if not row.get('fading')}
+        if time.monotonic()<self.prepare_deadline and any(output and output['name'] not in ready for _,output,_ in self.targets):return True
+        if self.args.mode=='shader':
+            try:
+                with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as channel:channel.sendto(b'opening-snapshot',str(self.directory/'compositor.sock'))
+            except OSError:pass
+            self.snapshot_deadline=time.monotonic()+1
+            GLib.timeout_add(20,self.opening_images)
+        else:self.build([None]*len(self.targets))
+        return False
+
+    def opening_images(self):
+        if self.closed:return False
+        paths=[self.directory/'previews'/('opening-'+hashlib.sha256(output['name'].encode()).hexdigest()+'.png') if output else None for _,output,_ in self.targets]
+        if time.monotonic()<self.snapshot_deadline and any(path and not path.exists() for path in paths):return True
+        images=[]
+        for path in paths:
+            try:images.append(path.read_bytes() if path else None)
+            except OSError:images.append(None)
+            finally:
+                if path:path.unlink(missing_ok=True)
+        self.build(images);return False
 
     def capture(self):
         # One bounded snapshot per output, only in memory. All are captured before
@@ -165,7 +203,7 @@ class ExitOverlay:
         self.maybe_start();return False
 
     def maybe_start(self):
-        if self.started is None and self.panes and len(self.panes)==len(self.targets) and all(pane.ready for pane in self.panes):
+        if self.started is None and self.panes and len(self.panes)==len(self.targets) and all(pane.ready and pane.painted for pane in self.panes):
             # GTK's frame clock shares the monotonic clock; each output samples the
             # same start time while painting at its own refresh rate.
             self.started=GLib.get_monotonic_time()/1e6

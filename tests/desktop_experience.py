@@ -24,14 +24,16 @@ with tempfile.TemporaryDirectory(prefix='madway-experience-') as tmp:
     for app in ('org.madway.PinnedFixture','org.madway.OtherFixture'):
         (data/'applications'/(app+'.desktop')).write_text(f'[Desktop Entry]\nType=Application\nName={app.split(".")[-1]}\nExec=/bin/true\nIcon=utilities-terminal\nStartupWMClass={app}\n')
     binaries=root/'bin';binaries.mkdir()
-    hardware=root/'hardware.json';hardware.write_text(json.dumps(dict(volume=50,brightness=40)))
+    hardware=root/'hardware.json';hardware.write_text(json.dumps(dict(volume=50,brightness=40,mic_mute=False)))
     for tool in ('wpctl','brightnessctl'):
         script=binaries/tool
         script.write_text('#!'+sys.executable+'\n'+'''import json,sys
 from pathlib import Path
 path=Path('''+repr(str(hardware))+''');state=json.loads(path.read_text());args=sys.argv[1:]
 if Path(sys.argv[0]).name=='wpctl':
- if args[0]=='get-volume':print('Volume: %.2f'%(state['volume']/100))
+ if args[0]=='get-volume':print('Volume: %.2f'%(state['volume']/100)+(' [MUTED]' if args[-1]=='@DEFAULT_AUDIO_SOURCE@' and state['mic_mute'] else ''))
+ elif args[0]=='set-mute':
+  assert args[1]=='@DEFAULT_AUDIO_SOURCE@';state['mic_mute']=not state['mic_mute']
  elif args[0]=='set-volume':state['volume']=min(100,state['volume']+5)
 else:
  if args[0]=='get':print(state['brightness'])

@@ -21,7 +21,7 @@ struct madway_motion {
     struct wlr_scene_tree *tree;
     struct wlr_scene_buffer *image,*incoming;
     struct wlr_box from,to,bounds,visual;
-    double started,progress;
+    double started,progress,duration_ms;
     double opacity_from,opacity;
     bool running,reveal,minimizing,restoring,continuing;
 };
@@ -125,7 +125,7 @@ void madway_motion_frame(struct madway_output *output,double now)
     if (!madway_motion_active(output)) return;
     struct madway_server *server=output->server;
     struct madway_motion *motion=server->window_motion;
-    double progress=(now-motion->started)/server->config.window_animation_ms;
+    double progress=(now-motion->started)/motion->duration_ms;
     if (progress>=1 || server->locked || server->sleeping || (server->session && !server->session->active)) {
         madway_motion_finish(server);
         if (!server->shutting_down && !server->locked) madway_rebase_cursor(server);
@@ -172,6 +172,7 @@ void madway_motion_prepare(struct madway_view *view)
     if (!buffer) return;
     struct madway_motion *motion=calloc(1,sizeof(*motion));
     if (motion) {
+        motion->duration_ms=server->config.window_animation_ms;
         motion->view=view;motion->continuing=retained!=NULL;motion->opacity_from=opacity;
         motion->from=retained?visual:window_box(view,false);madway_view_output_box(view,&motion->bounds);
         motion->tree=wlr_scene_tree_create(server->desktop_tree);
@@ -211,6 +212,20 @@ void madway_motion_open(struct madway_view *view)
     motion->from.x+=dx;motion->from.y+=dy+6;
     motion->from.width-=2*dx;motion->from.height-=2*dy;
     motion->opacity_from=0;
+    madway_motion_start(view,false,false);
+    if (view->server->window_motion) view->server->window_motion->restoring=true;
+}
+
+void madway_motion_activate(struct madway_view *view)
+{
+    if (!view->server->config.effects_animate) return;
+    madway_motion_prepare(view);
+    struct madway_motion *motion=view->server->window_motion;
+    if (!motion || motion->view!=view) return;
+    int dx=(int)lround(motion->from.width*.008),dy=(int)lround(motion->from.height*.008);
+    motion->from.x+=dx;motion->from.y+=dy+2;
+    motion->from.width-=2*dx;motion->from.height-=2*dy;
+    motion->duration_ms=200;motion->opacity_from=.92;
     madway_motion_start(view,false,false);
     if (view->server->window_motion) view->server->window_motion->restoring=true;
 }

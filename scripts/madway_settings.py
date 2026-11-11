@@ -155,6 +155,8 @@ PAGE_DESCRIPTIONS={
     'Input':'Focus behavior and the shortcut modifier.',
     'Keyboard':'Typing repeat, keyboard layouts and shortcuts.',
     'Mouse & touchpad':'Buttons, pointer motion, tapping and gestures.',
+    'Microphone':'Input devices, ports, mute, input meter and meeting audio routing.',
+    'Camera':'Camera devices and a local live preview.',
     'Network':'Wi-Fi, Ethernet and saved VPN connections.',
     'Bluetooth':'Adapter power and paired devices.',
     'Default applications':'Applications used for links, files and folders.',
@@ -169,7 +171,7 @@ PAGE_DESCRIPTIONS={
 
 
 class SettingsBrowser:
-    """One group at a time, searchable pages, and a stable page heading."""
+    """All categories stay visible; searchable pages share a stable heading."""
     def __init__(self,stack,sidebar,groups,search,tabs,heading,description):
         self.stack=stack;self.sidebar=sidebar;self.groups=groups;self.search=search
         self.heading=heading;self.description=description;self.group=None;self.syncing=False
@@ -217,7 +219,7 @@ class SettingsBrowser:
         name=row.page;query=self.search.get_text().strip().casefold()
         if name is None:
             return not query or any(all(word in self.index[page] for word in query.split()) for page in self.groups[row.group])
-        return all(word in self.index[name] for word in query.split()) if query else row.group==self.group
+        return all(word in self.index[name] for word in query.split()) if query else True
 
     def select_row(self,widget,row):
         if row and row.page and not self.syncing:self.stack.set_visible_child_name(row.page)
@@ -233,7 +235,8 @@ class SettingsBrowser:
         self.group=next((group for group,pages in self.groups.items() if page in pages),next(iter(self.groups)))
         self.last[self.group]=page;self.syncing=True
         for group,button in self.group_buttons.items():
-            button.set_active(group==self.group);button.set_label(('▾  ' if group==self.group or self.search.get_text().strip() else '▸  ')+group)
+            button.set_active(group==self.group);button.set_label(group)
+            button.get_child().set_xalign(0)
         self.list.select_row(self.rows[page])
         self.syncing=False;self.heading.set_text(self.stack.child_get_property(self.pages[page],'title'))
         self.description.set_text(PAGE_DESCRIPTIONS.get(page,''));self.list.invalidate_filter()

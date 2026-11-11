@@ -180,8 +180,8 @@ static int tick(void *unused)
             uint32_t code=command==34?KEY_END:KEY_UP;
             key(code,true);key(code,false);key(KEY_ENTER,true);key(KEY_ENTER,false);
         }
-        else if(command==40 || command==41) {
-            uint32_t code=command==40?KEY_VOLUMEUP:KEY_BRIGHTNESSUP;
+        else if(command==40 || command==41 || command==42 || command==43) {
+            uint32_t code=command==40?KEY_VOLUMEUP:command==41?KEY_BRIGHTNESSUP:KEY_MICMUTE;
             key(code,true);key(code,false);
         }
         else if(command==45 || command==46) {

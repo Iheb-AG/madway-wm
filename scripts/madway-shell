@@ -25,14 +25,14 @@ SHARE = Path(__file__).resolve().parent.parent / "share" / "madway"
 SETTINGS_GROUPS={
     'Appearance':('Appearance','Wallpaper','Animations','Session effects','Panel','Dock','Desktop','Launcher'),
     'Workspace':('Windows','Displays'),
-    'Input':('Input','Keyboard','Mouse & touchpad'),
+    'Input':('Input','Keyboard','Mouse & touchpad','Microphone','Camera'),
     'Connectivity':('Network','Bluetooth'),
     'System':('Notifications','Audio & brightness','Power','Default applications','Date & time','Sounds','Session','About'),
 }
 SETTINGS_PAGES=tuple(page for pages in SETTINGS_GROUPS.values() for page in pages)
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "madway" / "settings.ini"
 DEFAULTS = {
-    "appearance": {"theme": "black", "title_height": "14", "tile_gap": "1",'font':'','text_size':'0','title_font_size':'0','icon_theme':'','custom_colors':'false'},
+    "appearance": {"theme": "black", "shell_finish":"classic", "title_height": "14", "tile_gap": "1",'font':'','text_size':'0','title_font_size':'0','icon_theme':'','custom_colors':'false'},
     'colors':{key:'' for key in ('background','surface','text','muted','border','accent','active')},
     'launcher':{'width':'560','lines':'7','icons':'true','icon_size':'28','autocomplete':'true','completion_opacity':'38'},
     "windows": {"default_mode": "floating", "master_percent": "50", "animate":"true", "animation_ms":"360",'close_animate':'true','close_ms':'240'},
@@ -61,6 +61,7 @@ def settings():
     config.read_dict(DEFAULTS)
     stored=configparser.ConfigParser(interpolation=None);stored.read(CONFIG)
     config.read_dict({section:dict(stored.items(section)) for section in stored.sections()})
+    config['appearance']['shell_finish']='classic'  # Retired Studio experiment; keep the approved border fix.
     legacy={'gershwin':'argent','gershwin-dark':'argent-dark'}
     config['appearance']['theme']=legacy.get(config.get('appearance','theme'),config.get('appearance','theme'))
     if not stored.has_option('sounds','logon') and config.get('sounds','startup').strip():
@@ -115,13 +116,14 @@ def panel_style(config):
 
 def desktop_preset(config, name):
     """Apply geometry and background together, preserving unrelated preferences."""
-    if name not in {'argent','argent-dark'}:raise ValueError('Unknown desktop preset')
-    config['appearance'].update(theme=name, title_height='22')
-    config['panel'].update(enabled='true', position='top', height='22', metrics='false')
+    if name not in {'argent','argent-dark','windows-xp','windows-vista'}:raise ValueError('Unknown desktop preset')
+    config['appearance'].update(theme=name, shell_finish='classic', title_height='22')
+    config['panel'].update(enabled='true', position='bottom' if name.startswith('windows-') else 'top', height='24' if name.startswith('windows-') else '22', metrics='false')
     config['dock'].update(enabled='true',position='bottom')
-    wallpaper = SHARE/'wallpapers'/'Abstract Blue.png'
-    config['wallpaper'].update(type='image' if wallpaper.is_file() else 'color',
-        path=str(wallpaper) if wallpaper.is_file() else '', mode='stretch', color='#5f6770')
+    if name in {'argent','argent-dark'}:
+        wallpaper = SHARE/'wallpapers'/'Abstract Blue.png'
+        config['wallpaper'].update(type='image' if wallpaper.is_file() else 'color',
+            path=str(wallpaper) if wallpaper.is_file() else '', mode='stretch', color='#5f6770')
     return config
 
 
@@ -130,6 +132,11 @@ def write_settings(config):
     with tempfile.NamedTemporaryFile('w', dir=CONFIG.parent, delete=False) as temporary:
         config.write(temporary);temporary_path = Path(temporary.name)
     temporary_path.replace(CONFIG)
+
+
+def appearance_preview(choice):
+    module=runpy.run_path(str(Path(__file__).with_name('madway_appearance.py')))
+    module['change'](settings(),choice,CONFIG.parent/'appearance-rollback.json',write_settings)
 
 
 def theme_style(style, config=None):
@@ -156,6 +163,11 @@ def theme_style(style, config=None):
             result = re.sub(r'^font=.*$', 'font=Inter Medium 10', result, flags=re.M)
             result = re.sub(r'^border-radius=.*$', 'border-radius=6', result, flags=re.M)
     if '{' in style:
+        if name in {'windows-xp','windows-vista'}:result+='\n'+(SHARE/(name+'.css')).read_text()
+        # The stock finish also loses its white bevel; preview styling never
+        # changes this border policy or affects non-Argent palettes.
+        if name in {'argent','argent-dark'}:
+            result+='\n.bar, .bar.top, .bar.bottom, .bar.left, .bar.right { border: 0; } window#waybar, window#waybar > box { border: 0; } .bar button { outline-style: none; }'
         result+=font_style(config)
         selected=contrast_text(colors['active'])
         # GTK popup menus and chooser views are separate windows: do not let
@@ -246,12 +258,18 @@ def run(arguments):
     return result.stdout.strip()
 
 
-def volume():
-    text = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
+def audio_level(device):
+    text = run(["wpctl", "get-volume", device])
     match = re.search(r"Volume:\s*([0-9.]+)", text)
     if not match:
         raise RuntimeError("No default audio output")
     return round(float(match[1]) * 100), "MUTED" in text
+
+
+def volume():return audio_level("@DEFAULT_AUDIO_SINK@")
+
+
+def microphone():return audio_level("@DEFAULT_AUDIO_SOURCE@")
 
 
 def audio_snapshot():
@@ -464,7 +482,9 @@ class Desktop:
         self.pin_defs=[];self.pin_payloads={}
         self.apps=runpy.run_path(str(Path(__file__).with_name('madway_apps.py')))
         self.media=runpy.run_path(str(Path(__file__).with_name('madway_media.py')))['MediaController'](self,
-            dict(run=run,volume=volume,brightness=brightness,set_brightness=set_brightness))
+            dict(run=run,volume=volume,microphone=microphone,brightness=brightness,set_brightness=set_brightness))
+        self.native=os.environ.get('MADWAY_NATIVE')=='1'
+        self.playback=runpy.run_path(str(Path(__file__).with_name('madway_playback.py')))['PlaybackGuard'](self)
         self.session_exit=runpy.run_path(str(Path(__file__).with_name('madway_exit.py')))['SessionExitController'](self)
         GLib.timeout_add(150,self.poll_pins)
         GLib.timeout_add_seconds(2,self.poll_session_power)
@@ -515,9 +535,9 @@ class Desktop:
             return
         gain = min(1, max(0, self.config.getfloat("sounds", "volume")))
         if shutil.which("pw-play"):
-            arguments = ["pw-play", "--volume", str(gain), str(path)]
+            arguments = ["pw-play", "--properties", "application.name=madway-session-sound media.role=Notification", "--volume", str(gain), str(path)]
         elif shutil.which("paplay"):
-            arguments = ["paplay", "--volume", str(round(gain * 65536)), str(path)]
+            arguments = ["paplay", "--client-name=madway-session-sound", "--stream-name=madway-session-sound", "--volume", str(round(gain * 65536)), str(path)]
         else:
             return
         process = self.spawn("sound-" + event, arguments)
@@ -532,9 +552,9 @@ class Desktop:
     def notify(self, key, title, body="", value=None, urgency="normal", timeout=1500,previous=None,pending=False):
         if not self.config.getboolean("notifications", "enabled"):
             return False
-        if key in {"volume", "brightness"} and not self.config.getboolean("notifications", "indicators"):
+        if key in {"volume", "brightness", "microphone"} and not self.config.getboolean("notifications", "indicators"):
             return
-        if key in {'volume','brightness'} and value is not None:
+        if key in {'volume','brightness','microphone'} and value is not None:
             try:
                 state=json.loads((self.directory/'desktop.json').read_text())
                 output=(state.get('output_x',0),state.get('output_y',0))
@@ -870,6 +890,10 @@ class Desktop:
                 config[section][key] = str(value)
             write_settings(config)
             self.apply()
+        elif name == 'appearance-preview':
+            if message.get('variant')!='rollback':raise ValueError('Studio preview was retired')
+            appearance_preview('rollback')
+            self.apply()
         elif name == 'desktop-preset':
             write_settings(desktop_preset(settings(), message.get('preset')))
             self.apply()
@@ -943,7 +967,7 @@ class Desktop:
         elif name == "apply":
             self.apply()
             self.notify("settings", "Settings applied")
-        elif name in {'volume-up','volume-down','volume-mute','set-volume','brightness-up','brightness-down','set-brightness'}:
+        elif name in {'microphone-mute','volume-up','volume-down','volume-mute','set-volume','brightness-up','brightness-down','set-brightness'}:
             self.media.request(name,message)
         elif name in {"startup-sound", "logon-sound", "logout-sound", "shutdown-sound"}:
             event = name.removesuffix("-sound")
@@ -973,6 +997,10 @@ class Desktop:
             self.locker.retry()
         else:
             raise RuntimeError("Unknown desktop action")
+
+    def prepare_exit_audio(self,ready):self.playback.start(ready)
+
+    def restore_exit_audio(self):self.playback.stop()
 
     def finish_session_operation(self,operation):
         if operation=='logout':
@@ -1098,13 +1126,13 @@ def settings_window(initial_page="Windows"):
     window.add(root)
     content=Gtk.Box(spacing=0);root.pack_start(content,True,True,0)
     navigation=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8,margin=8)
-    navigation.set_size_request(178,-1);navigation.get_style_context().add_class('settings-navigation')
+    navigation.set_size_request(162,-1);navigation.get_style_context().add_class('settings-navigation')
     content.pack_start(navigation,False,False,0)
     search=Gtk.SearchEntry(placeholder_text='Find settings…');search.set_width_chars(18);navigation.pack_start(search,False,False,0)
     sidebar=Gtk.ScrolledWindow();sidebar.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC);sidebar.set_overlay_scrolling(False)
     navigation.pack_start(sidebar,True,True,0)
     stack=Gtk.Stack();stack.set_hexpand(True);tabs=None
-    body=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4,margin=12)
+    body=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4,margin=10)
     content.pack_start(body,True,True,0)
     heading=Gtk.Label(xalign=0);heading.get_style_context().add_class('settings-heading');body.pack_start(heading,False,False,0)
     description=Gtk.Label(xalign=0,wrap=True,max_width_chars=65);description.get_style_context().add_class('settings-description');body.pack_start(description,False,False,0)
@@ -1114,7 +1142,7 @@ def settings_window(initial_page="Windows"):
     status.connect('notify::label',lambda widget,*args:widget.set_visible(bool(widget.get_text())))
 
     def category(name):
-        grid=Gtk.Grid(column_spacing=12,row_spacing=9,margin_top=8,margin_bottom=8)
+        grid=Gtk.Grid(column_spacing=12,row_spacing=7,margin_top=8,margin_bottom=8)
         grid.set_valign(Gtk.Align.START);grid.set_hexpand(True);grid.next_row=0
         scroll=Gtk.ScrolledWindow();scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False);scroll.add(grid)
@@ -1131,6 +1159,7 @@ def settings_window(initial_page="Windows"):
             widget.set_hexpand(True);grid.attach(widget,0,row,2,1);return widget
         caption=Gtk.Label(label=label,xalign=0,wrap=True,max_width_chars=23)
         caption.set_width_chars(17);caption.set_valign(Gtk.Align.CENTER)
+        caption.set_mnemonic_widget(widget)
         grid.attach(caption,0,row,1,1)
         widget.set_hexpand(True);widget.set_valign(Gtk.Align.CENTER)
         if isinstance(widget,Gtk.Scale):widget.set_value_pos(Gtk.PositionType.RIGHT)
@@ -1154,9 +1183,9 @@ def settings_window(initial_page="Windows"):
         return field(grid, label, widget)
 
     def switch(grid, label, section, key):
-        widget = field(grid, label, Gtk.Switch())
+        widget = field(grid, label, Gtk.CheckButton())
         widget.set_active(config.getboolean(section, key))
-        widget.set_halign(Gtk.Align.END);widget.set_size_request(44,22)
+        widget.set_halign(Gtk.Align.END);widget.set_size_request(22,22)
         return widget
 
     def file_field(grid, label, value, directory=False):
@@ -1267,11 +1296,12 @@ def settings_window(initial_page="Windows"):
     section(appearance,'Desktop profile')
     profiles = themes()
     theme_choice = combo(appearance, "Theme profile", [(key, profiles[key]["name"]) for key in profiles.sections()], config.get("appearance", "theme"))
-    presets=Gtk.Box(spacing=6,homogeneous=True)
-    for profile,label in [('argent','Argent Silver'),('argent-dark','Argent Midnight')]:
-        preset=Gtk.Button(label=label);preset.connect('clicked',lambda w,profile=profile:(action('desktop-preset',preset=profile),window.destroy()))
-        presets.pack_start(preset,True,True,0)
-    field(appearance,'Coordinated preset',presets)
+    apply_layout=Gtk.Button(label='Use this profile layout')
+    apply_layout.set_tooltip_text('Argent: top panel. XP/Vista: bottom panel. Preserves your input and audio settings.')
+    apply_layout.connect('clicked',lambda w:(action('desktop-preset',preset=theme_choice.get_active_id()),window.destroy()))
+    apply_layout.set_sensitive(theme_choice.get_active_id() in {'argent','argent-dark','windows-xp','windows-vista'})
+    theme_choice.connect('changed',lambda w:apply_layout.set_sensitive(w.get_active_id() in {'argent','argent-dark','windows-xp','windows-vista'}))
+    field(appearance,'Coordinated layout',apply_layout)
     section(appearance,'Typography & icons')
     shell_font=field(appearance,'UI font family',Gtk.Entry(text=config.get('appearance','font')))
     shell_font.set_placeholder_text('Theme default (for example Inter or monospace)')
@@ -1507,6 +1537,16 @@ def settings_window(initial_page="Windows"):
     anchor = combo(notifications_page, "Position", [(item, item.replace("-", " ").title()) for item in
                    ["top-right", "top-left", "bottom-right", "bottom-left"]], config.get("notifications", "anchor"))
 
+    if 'madway_capture' not in sys.modules:
+        spec=importlib.util.spec_from_file_location('madway_capture',Path(__file__).with_name('madway_capture.py'))
+        module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+    capture=vars(sys.modules['madway_capture'])
+    microphone_page=category('Microphone');microphone=capture['MicrophonePane'](runtime_directory);microphone_page.attach(microphone,0,0,2,1)
+    camera_page=category('Camera');camera=capture['CameraPane'](runtime_directory);camera_page.attach(camera,0,0,2,1)
+    def capture_page_changed(*args):
+        if stack.get_visible_child_name()!='Microphone':microphone.stop()
+        if stack.get_visible_child_name()!='Camera':camera.stop()
+    stack.connect('notify::visible-child-name',capture_page_changed)
     audio = category("Audio & brightness")
     def hardware_slider(label, getter, name):
         slider = field(audio, label, Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0 if name == "set-volume" else 1, 100, 1))
@@ -1520,6 +1560,8 @@ def settings_window(initial_page="Windows"):
             slider.set_sensitive(False)
         slider.connect("button-release-event", lambda widget, event: send(name, value=round(widget.get_value())))
         slider.connect("key-release-event", lambda widget, event: send(name, value=round(widget.get_value())))
+    input_button=Gtk.Button(label='Microphone, input level & meeting apps…')
+    input_button.connect('clicked',lambda w:stack.set_visible_child_name('Microphone'));field(audio,'Audio input',input_button)
     hardware_slider("Output volume", lambda: volume()[0], "set-volume")
     mute = Gtk.Button(label="Toggle mute");mute.connect("clicked", lambda button: send("volume-mute"));field(audio, "Output mute", mute)
     hardware_slider("Display brightness", brightness, "set-brightness")
@@ -1753,7 +1795,7 @@ def settings_window(initial_page="Windows"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["serve", "settings", "action", "doctor", "preset", "confirm-session", "dock-menu", "dock-launch"])
+    parser.add_argument("command", choices=["serve", "settings", "action", "doctor", "preset", "appearance-preview", "confirm-session", "dock-menu", "dock-launch"])
     parser.add_argument("name", nargs="?")
     parser.add_argument("--compositor-pid", type=int)
     parser.add_argument("--value", type=int)
@@ -1771,10 +1813,16 @@ def main():
     elif arguments.command in {'dock-menu','dock-launch'}:
         if not arguments.name:parser.error('A desktop application ID is required')
         action('application-menu' if arguments.command=='dock-menu' else 'dock-launch',app_id=arguments.name)
+    elif arguments.command == 'appearance-preview':
+        if arguments.name!='rollback':parser.error('The Studio experiment was retired. Use appearance-preview rollback to restore its checkpoint.')
+        appearance_preview(arguments.name)
+        print('Previous appearance restored.')
+        try:action('apply')
+        except (OSError,RuntimeError,KeyError):pass
     elif arguments.command == 'preset':
         write_settings(desktop_preset(settings(), arguments.name))
-        print('Argent preset saved to '+str(CONFIG))
-        if not (SHARE/'wallpapers'/'Abstract Blue.png').is_file():
+        print('Desktop preset saved to '+str(CONFIG))
+        if arguments.name in {'argent','argent-dark'} and not (SHARE/'wallpapers'/'Abstract Blue.png').is_file():
             print('Original wallpaper is unavailable; using Argent background color.')
         try:action('apply')
         except (OSError, RuntimeError, KeyError):pass

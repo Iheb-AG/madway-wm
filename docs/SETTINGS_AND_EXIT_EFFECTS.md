@@ -1,17 +1,14 @@
 # Settings browser and session exit effects
 
-Settings uses a single searchable source list, grouped under Appearance,
-Workspace, Input, Connectivity and System. Expand a group to see its pages;
-other groups remain reachable in the same sidebar. Navigation preserves drafts.
-A page title, short description and section headings organize the right pane.
+Settings uses one searchable source list under Appearance, Workspace, Input,
+Connectivity and System. All page categories stay visible in the scrolling list;
+there are no expanding group tabs. Navigation preserves draft edits. The source
+list matches the window background and marks the selected page with a quiet
+accent rail. Controls use flat compact buttons, square check inputs, integrated
+numeric fields and minimal section spacing. Long forms scroll above a fixed footer.
 
-Controls follow the selected desktop palette: gently beveled buttons, rounded
-switches with white thumbs, blue or theme-colored selections, inset entries,
-and consistent numeric fields. Switches and numeric fields align along the
-right edge; long forms scroll without covering the footer. Search spans page
-names, labels, choices and hints. Session sound paths have their own System →
-Sounds page. The Settings window also opens with a short compositor fade/zoom,
-controlled by the window-animation preference.
+Session sound paths live under System → Sounds. Microphone and Camera pages are
+under Input. The Settings window keeps its compositor opening animation.
 
 ## Select an exit effect
 
@@ -23,7 +20,7 @@ Open **Appearance → Session effects**. Choose:
 | Simple fade | Ease the desktop into a dark charcoal surface. |
 | Custom shader | Run a built-in GLSL effect over a snapshot of each monitor. |
 
-Nine custom shaders are included:
+Thirteen shaders are included:
 
 - **CRT standby:** compress the desktop into a soft horizontal line, then a point.
 - **Iris close:** close a soft circular aperture toward the center.
@@ -34,6 +31,14 @@ Nine custom shaders are included:
 - **Ember dissolve:** a fractal burn front with drifting embers and glowing edges.
 - **Mechanical shutter:** seven rotating aperture blades with metal seams.
 - **Aurora veil:** layered noise curtains with refractive, colored light.
+- **Zoom defocus · GPUImage:** multi-tap radial defocus toward the center.
+- **Polar crystal · GPUImage:** concentric angular pixelization.
+- **Pinch lens · GPUImage:** aspect-correct center-lens distortion.
+- **Crosshatch raster · GPUImage:** luminance-weighted diagonal hatch rendering.
+
+The four GPUImage filters are adapted from Brad Larson's BSD-licensed GPUImage2,
+with pinned source links in [shader provenance](../share/madway/shaders/SOURCES.md)
+and its shipped license. No GL Transitions effects are included.
 
 The duration is configurable from 160–1600 ms (default 600 ms). Motion follows
 GTK frame-clock callbacks at each output's refresh rate with the shared cubic
@@ -46,7 +51,12 @@ settings or performing logout, restart or shutdown. It returns to the desktop
 with a short reveal; Escape closes the preview. Apply saves the selected effect. **Animate session opening** enables a matching
 reveal at login, with its own duration and **Preview opening** button. Startup
 or logon audio starts at the opening effect's animation epoch. These are session
-reveals, not a bootloader or display-manager animation.
+reveals, not a bootloader or display-manager animation. The compositor covers all
+outputs before their first desktop frame. Wallpaper/services prepare underneath;
+once every opening pane has painted, it hands off the cover and starts audio at
+the shared reveal epoch. Opening shaders capture the desktop beneath the cover
+through bounded private snapshots, which the renderer removes after loading.
+Failure, cancellation and a bounded timeout release the cover.
 
 ```ini
 [session_effects]
@@ -114,3 +124,18 @@ python3 /usr/local/bin/madway_exit.py --preview --mode shader --shader crt
 All integration tests use temporary homes and private Wayland outputs. Their
 power commands are local stubs; they never shut down the host. Native graphics
 behavior still needs validation on the target laptop.
+
+## Application audio during exit
+
+After confirmation, the helper quiets application playback streams before starting
+an effect. At the shared visual/audio epoch, it sends graceful close requests to
+normal application windows. The session player is explicitly tagged and exempt;
+the output device and microphone are not muted. New playback streams are isolated
+until the action finishes. Nested sessions only quiet streams belonging to their
+client processes, leaving the host desktop's playback alone.
+
+If applications remain open, including an unsaved-work dialog, exit is cancelled
+after a short grace period. Escape, locking, rejected power actions and the audio
+guard watchdog restore only the stream mute states changed by madway. Already
+closed applications are not relaunched. A preview never closes apps or isolates
+playback. Animation and sound still run concurrently.

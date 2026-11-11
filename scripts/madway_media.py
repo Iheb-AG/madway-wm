@@ -5,20 +5,21 @@ import threading
 
 class MediaController:
     def __init__(self,desktop,api):
-        self.desktop=desktop;self.api=api;self.values={};self.serial={'volume':0,'brightness':0};self.closed=False
+        self.desktop=desktop;self.api=api;self.values={};self.serial={'volume':0,'brightness':0,'microphone':0};self.closed=False
         self.pending=queue.Queue();self.worker=threading.Thread(target=self.work,daemon=True);self.worker.start()
 
     def feedback(self,kind,value,muted=False,previous=None,pending=False):
         title='Volume muted' if kind=='volume' and muted else f'Volume {value}%' if kind=='volume' else f'Brightness {value}%'
+        if kind=='microphone':title='Microphone muted' if muted else 'Microphone on'
         self.desktop.notify(kind,title,value=value,previous=previous,pending=pending)
 
     def request(self,name,message):
-        kind='volume' if 'volume' in name else 'brightness';self.serial[kind]+=1;serial=self.serial[kind]
+        kind='microphone' if name=='microphone-mute' else 'volume' if 'volume' in name else 'brightness';self.serial[kind]+=1;serial=self.serial[kind]
         cached=self.values.get(kind);previous=None
-        step=min(20,max(1,self.desktop.config.getint('controls','volume_step' if kind=='volume' else 'brightness_step')))
+        step=min(20,max(1,self.desktop.config.getint('controls','volume_step' if kind in ('volume','microphone') else 'brightness_step')))
         if cached:
             value,muted=cached;previous=value
-            if name=='volume-mute':muted=not muted
+            if name in ('volume-mute','microphone-mute'):muted=not muted
             elif name.startswith('set-'):value=int(message['value'])
             else:value+=step*(1 if name.endswith('-up') else -1)
             value=min(100,max(0 if kind=='volume' else 1,value));self.values[kind]=(value,muted)
@@ -37,13 +38,13 @@ class MediaController:
         return False
 
     def read(self,kind):
-        if kind=='volume':return self.api['volume']()
+        if kind in ('volume','microphone'):return self.api[kind]()
         value=self.api['brightness']()
         if value is None:return None
         return value,False
 
     def work(self):
-        for kind in ('volume','brightness'):
+        for kind in (('volume','brightness','microphone') if 'microphone' in self.api else ('volume','brightness')):
             if self.closed:return
             try:self.desktop.GLib.idle_add(self.complete,kind,0,self.read(kind))
             except Exception:pass
@@ -52,7 +53,8 @@ class MediaController:
             if item is None or self.closed:return
             kind,serial,name,message,step=item
             try:
-                if kind=='volume':
+                if kind=='microphone':self.api['run'](['wpctl','set-mute','@DEFAULT_AUDIO_SOURCE@','toggle'])
+                elif kind=='volume':
                     if name=='volume-mute':self.api['run'](['wpctl','set-mute','@DEFAULT_AUDIO_SINK@','toggle'])
                     elif name=='set-volume':self.api['run'](['wpctl','set-volume','--limit','1.0','@DEFAULT_AUDIO_SINK@',str(min(100,max(0,int(message['value']))))+'%'])
                     else:self.api['run'](['wpctl','set-volume','--limit','1.0','@DEFAULT_AUDIO_SINK@',str(step)+'%'+('+' if name.endswith('-up') else '-')])

@@ -10,6 +10,7 @@ struct wlr_buffer *madway_window_snapshot(struct madway_view *view);
 struct wlr_buffer *madway_window_snapshot_alpha(struct madway_view *view);
 struct wlr_buffer *madway_scene_snapshot(struct madway_server *server,struct madway_output *output);
 struct wlr_buffer *madway_layer_snapshot(struct madway_layer *layer);
+void madway_preview_opening(struct madway_server *server);
 void madway_preview_capture(struct madway_server *server);
 void madway_preview_capture_one(struct madway_server *server, uint32_t identity);
 void madway_preview_remove(struct madway_view *view);

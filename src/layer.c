@@ -7,6 +7,7 @@
 #include "lock.h"
 #include "session.h"
 #include "effects.h"
+#include "startup.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -123,6 +124,7 @@ static void handle_layer_map(struct wl_listener *listener, void *data)
     (void)data;
     struct madway_layer *layer = wl_container_of(listener, layer, map);
     layer->mapped = true;
+    madway_startup_check(layer->server);
     wlr_scene_node_set_enabled(&layer->tree->node, true);
     madway_effects_map(layer);
     // Publish the new wallpaper as fading from its first mapped state, so the
@@ -141,6 +143,7 @@ static void handle_layer_unmap(struct wl_listener *listener, void *data)
     struct madway_layer *layer = wl_container_of(listener, layer, unmap);
     madway_effects_unmap(layer);
     layer->mapped = false;
+    if (layer->server->startup_pending && !strcmp(layer->surface->namespace,"madway-session-exit")) madway_startup_release(layer->server);
     madway_dock_finish(layer);
     wlr_scene_node_set_enabled(&layer->tree->node, false);
     if (layer->server->keyboard_layer == layer)
@@ -159,6 +162,7 @@ static void handle_layer_destroy(struct wl_listener *listener, void *data)
     if(layer->effect_cache)wlr_buffer_drop(layer->effect_cache);
     layer->effect_cache=NULL;
     layer->mapped = false;
+    if (layer->server->startup_pending && !strcmp(layer->surface->namespace,"madway-session-exit")) madway_startup_release(layer->server);
     madway_dock_finish(layer);
     if (server->keyboard_layer == layer) { server->keyboard_layer = NULL; restore_focus(server); }
     wl_list_remove(&layer->commit.link);

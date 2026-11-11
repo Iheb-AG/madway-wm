@@ -45,3 +45,34 @@ dbus-run-session -- python3 tests/argent_smoke.py
 dbus-run-session -- python3 tests/desktop_smoke.py
 python3 tests/installer_smoke.py
 ```
+
+## XP and Vista profiles
+
+[XP screenshot](screenshots/theme-xp.png) · [Vista screenshot](screenshots/theme-vista.png)
+
+
+**Windows XP · Luna** (`windows-xp`) adds a blue shaded panel, green user/menu
+button, warm beige controls and native blue title bars with right-aligned
+minimize/maximize/close controls. **Windows Vista · Aero** (`windows-vista`) adds
+slate glass-like bands, pale blue surfaces and the same compact native controls.
+These are original Cairo/CSS interpretations; no Microsoft wallpaper, font,
+icon pack, sound or other binary artwork is bundled. Font names use installed
+system fonts with normal sans-serif fallback. Glass bands are opaque, without blur.
+
+Select the theme in **Settings → Appearance** and Apply to retain your geometry.
+**Use this profile layout** applies coordinated title/panel sizes and a bottom
+panel. Command-line equivalents:
+
+```sh
+madway-shell preset windows-xp
+madway-shell preset windows-vista
+```
+
+## Approved Argent refinement
+
+The thin perimeter outline is removed from both Argent light/dark panels and
+docks. Original application icons, sizes, positioning and utility icons remain.
+The Studio finish experiment was not approved and is retired. A stored Studio
+flag is ignored on load. If you used its trial and want the previous color profile
+back too, `madway-shell appearance-preview rollback` can restore its old checkpoint;
+new previews cannot be activated.

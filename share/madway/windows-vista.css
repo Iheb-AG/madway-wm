@@ -1,0 +1,15 @@
+/* Aero-inspired opaque glass bands; no blur or bundled proprietary assets. */
+* { font-family: "Segoe UI", sans-serif; }
+.bar { background: linear-gradient(to bottom,#516c80,#304c61 46%,#172f43 49%,#294c66); border: 0; }
+.bar.left, .bar.right { background: linear-gradient(to right,#516c80,#304c61 46%,#172f43 49%,#294c66); }
+.bar button, .bar button label, .bar button image { color: #ffffff; }
+.bar button { background: transparent; box-shadow: none; border: 0; border-radius: 3px; padding: 0 6px; }
+.bar button:hover, .bar button.selected { background: alpha(#86c9ef,.25); }
+.bar button.brand { background: linear-gradient(to bottom,#459cc5,#17557f); font-weight: 600; padding: 0 9px; }
+.menu { background: #f8fbfd; border: 1px solid #96abb9; }
+.menu button:hover, .menu button:focus { background: #d7eaf6; }
+.menu button:hover label, .menu button:focus label { color: #172b3d; }
+window#waybar { background: transparent; }
+window#waybar > box { background: linear-gradient(to bottom,#486579,#223d52 48%,#152c3f 50%,#294b63); color: #ffffff; border: 0; }
+window#waybar label, window#waybar image { color: #ffffff; }
+#taskbar button.active { background: alpha(#96d5f3,.22); border-bottom-color: #8ed5ff; }

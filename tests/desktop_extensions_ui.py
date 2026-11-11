@@ -12,6 +12,7 @@ from gi.repository import Gtk,Gdk,GLib
 repo=Path(__file__).resolve().parent.parent
 api=runpy.run_path(str(repo/'scripts/madway-shell'))
 widgets=runpy.run_path(str(repo/'scripts/madway_widgets.py'))
+Layer=widgets['Layer']
 system=runpy.run_path(str(repo/'scripts/madway_system.py'))
 errors=[];calls=[]
 def capture(name):
@@ -70,15 +71,29 @@ with tempfile.TemporaryDirectory(prefix='madway-preview-ui-') as tmp:
     state=dict(windows=[row]);(directory/'desktop.json').write_text(json.dumps(state))
     import cairo
     surface=cairo.ImageSurface(cairo.FORMAT_ARGB32,240,135);cr=cairo.Context(surface);cr.set_source_rgb(.7,.2,.1);cr.paint();surface.write_to_png(str(directory/'previews/1.png'))
-    button=Gtk.Button();sent=[];preview=widgets['TaskPreview'](button,1,lambda:directory,lambda name,**values:sent.append((name,values)))
+    window=Gtk.Window();button=Gtk.Button();window.add(button);window.show_all()
+    while Gtk.events_pending():Gtk.main_iteration()
+    sent=[];preview=widgets['TaskPreview'](button,1,lambda:directory,lambda name,**values:sent.append((name,values)))
     preview.prefetch();assert sent==[('window-preview',dict(id=1))]
-    tip=SimpleNamespace(set_custom=lambda widget:None)
-    assert preview.query(button,0,0,False,tip)
+    monitor=Gdk.Display.get_default().get_monitor(0)
+    bounds=monitor.get_geometry()
+    for edge in ['top','bottom','left','right']:
+        preview.bar=dict(monitor=monitor,position=edge)
+        preview.show()
+        assert preview.window is not None
+        assert Layer.get_keyboard_mode(preview.window)==Layer.KeyboardMode.NONE
+        assert 0<=Layer.get_margin(preview.window,Layer.Edge.LEFT)<bounds.width
+        assert 0<=Layer.get_margin(preview.window,Layer.Edge.TOP)<bounds.height
+        preview.leave()
+    preview.show()
+    assert preview.window is not None
     assert preview.image.get_storage_type()==Gtk.ImageType.SURFACE and 'Restore' in preview.title.get_text()
-    state['locked']=True;(directory/'desktop.json').write_text(json.dumps(state))
-    assert not preview.query(button,0,0,False,tip)
-    button.destroy()
-print('PASS: thumbnail tooltip, restore label, snapshot request and locked-session privacy.',flush=True)
+    row['minimized']=False;row['fullscreen']=True;(directory/'desktop.json').write_text(json.dumps(state))
+    assert not preview.refresh() and preview.window is None
+    row['fullscreen']=False;state['locked']=True;(directory/'desktop.json').write_text(json.dumps(state))
+    assert not preview.refresh() and preview.window is None
+    window.destroy()
+print('PASS: thumbnail popup, restore label, snapshot request and locked-session privacy.',flush=True)
 
 panel=runpy.run_path(str(repo/'scripts/madway-panel'))
 for theme in api['themes']().sections():
@@ -111,4 +126,4 @@ for theme in api['themes']().sections():
             (dialog.accept if accept else dialog.cancel).clicked();return False
         GLib.timeout_add(100,inspect);assert dialog.run()==accept
 if errors:raise AssertionError('Calendar / dialog theme regression') from errors[0]
-print('PASS: seven palettes, calendar month navigation, centered layer dialogs, contrast, cancellation focus and accept/cancel without any machine actions.',flush=True)
+print('PASS: all configured palettes, calendar month navigation, centered layer dialogs, contrast, cancellation focus and accept/cancel without any machine actions.',flush=True)

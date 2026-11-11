@@ -29,6 +29,7 @@ void madway_theme_load(struct madway_config *config, const char *name)
     if (path == NULL || !g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
         g_key_file_load_from_file(file, MADWAY_THEME_SOURCE, G_KEY_FILE_NONE, NULL);
     const char *theme = name != NULL && g_key_file_has_group(file, name) ? name : "black";
+    config->windows_style=!strcmp(theme,"windows-xp")?1:!strcmp(theme,"windows-vista")?2:0;
     config->argent_dark = strcmp(theme, "argent-dark") == 0;
     config->argent = strcmp(theme, "argent") == 0 || config->argent_dark;
     color(file, theme, "surface", config->surface, "#080808");

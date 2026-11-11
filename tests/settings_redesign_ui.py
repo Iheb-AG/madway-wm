@@ -32,7 +32,7 @@ def check(stage=0):
             for group,button in browser.group_buttons.items():
                 button.clicked()
                 assert stack.get_visible_child_name() in api['SETTINGS_GROUPS'][group]
-                assert {browser.page_for_row(row) for row in browser.list.get_children() if row.get_child_visible() and row.page is not None}==set(api['SETTINGS_GROUPS'][group])
+                assert {browser.page_for_row(row) for row in browser.list.get_children() if row.get_child_visible() and row.page is not None}==set(api['SETTINGS_PAGES'])
             browser.search.set_text('shader');browser.search_changed();assert stack.get_visible_child_name()=='Session effects'
             browser.search.set_text('does-not-exist');browser.search_changed();assert 'No settings' in browser.description.get_text()
             browser.search.set_text('');browser.search_changed();stack.set_visible_child_name('Windows')

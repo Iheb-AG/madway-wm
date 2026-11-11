@@ -2,6 +2,7 @@
 #include "main.h"
 #include "view.h"
 #include "argent.h"
+#include "windows_theme.h"
 
 #include <cairo.h>
 #include <drm_fourcc.h>
@@ -47,7 +48,7 @@ static const struct wlr_buffer_impl title_impl = {
 int madway_frame_title_height(struct madway_view *view)
 {
     int height = view->server->config.title_height;
-    return view->compact_frame && !view->server->config.argent && height > 14 ? 14 : height;
+    return view->compact_frame && !view->server->config.argent && !view->server->config.windows_style && height > 14 ? 14 : height;
 }
 
 static struct wlr_buffer *draw_title(struct madway_view *view, int width)
@@ -64,6 +65,7 @@ static struct wlr_buffer *draw_title(struct madway_view *view, int width)
     }
     bool active = view->server->focused_view == view;
     cairo_t *cr = cairo_create(pixels->surface);
+    if (view->server->config.windows_style) {madway_windows_title(cr,view,width,title_height);goto complete;}
     if (view->server->config.argent) {
         madway_argent_title(cr, view, width, title_height);
         goto complete;
@@ -222,6 +224,13 @@ enum madway_frame_part madway_frame_at(struct madway_view *view, double lx, doub
         if (x < button) return MADWAY_FRAME_CLOSE;
         if (x >= width - button) return MADWAY_FRAME_MAXIMIZE;
         if (x >= width - 2 * button) return MADWAY_FRAME_MINIMIZE;
+        return MADWAY_FRAME_TITLE;
+    }
+    if (view->server->config.windows_style) {
+        int button=madway_windows_button_width(madway_frame_title_height(view));
+        if (x>=width-button) return MADWAY_FRAME_CLOSE;
+        if (x>=width-2*button) return MADWAY_FRAME_MAXIMIZE;
+        if (x>=width-3*button) return MADWAY_FRAME_MINIMIZE;
         return MADWAY_FRAME_TITLE;
     }
     if (x >= width - 15) return MADWAY_FRAME_CLOSE;

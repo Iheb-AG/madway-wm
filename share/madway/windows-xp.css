@@ -1,0 +1,14 @@
+/* Luna-inspired CSS. No Microsoft images, icons or sound files. */
+* { font-family: Tahoma, sans-serif; }
+.bar { background: linear-gradient(to bottom,#4b8cf7,#2364d8 18%,#235bd4 85%,#1745b8); border: 0; }
+.bar.left, .bar.right { background: linear-gradient(to right,#4b8cf7,#2364d8 18%,#1745b8); }
+.bar button, .bar button label, .bar button image { color: #ffffff; }
+.bar button { border: 0; border-radius: 2px; box-shadow: none; background: transparent; padding: 0 6px; }
+.bar button:hover, .bar button.selected { background: #4283ed; }
+.bar button.brand { background: linear-gradient(to bottom,#7ec478,#338c35 45%,#267c28); font-weight: 700; padding: 0 9px; }
+.menu { background: #f7f5ec; border: 1px solid #7d9cce; }
+.menu button:hover, .menu button:focus { background: #245edb; }
+.menu button:hover label, .menu button:focus label { color: #ffffff; }
+window#waybar { background: transparent; }
+window#waybar > box { background: #ece9d8; border: 0; }
+#taskbar button.active { background: #d6e2f5; border-bottom-color: #245edb; }

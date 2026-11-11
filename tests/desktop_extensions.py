@@ -11,6 +11,11 @@ with tempfile.TemporaryDirectory(prefix='madway-extensions-') as tmp:
     root=Path(tmp);runtime=root/'runtime';runtime.mkdir(mode=0o700)
     config=root/'config';(config/'madway').mkdir(parents=True)
     (config/'madway/settings.ini').write_text('[session_effects]\nopening=false\n[appearance]\ntheme=argent-dark\n[dock]\nenabled=false\n[desktop]\nicons=false\n[notifications]\nenabled=false\n[wallpaper]\ntype=color\ncolor=#131820\n')
+    if os.environ.get('MADWAY_TEST_THEME'):
+        ini=config/'madway/settings.ini'
+        ini.write_text(ini.read_text().replace('theme=argent-dark','theme='+os.environ['MADWAY_TEST_THEME']).replace('[appearance]','[appearance]\ntitle_height=24').replace('[panel]','[panel]\nheight=24'))
+    if os.environ.get('MADWAY_TEST_DOCK')=='1':
+        ini=config/'madway/settings.ini';ini.write_text(ini.read_text().replace('[dock]\nenabled=false','[dock]\nenabled=true\nautohide=false\ntray=false'))
     env={**os.environ,'HOME':tmp,'XDG_CONFIG_HOME':str(config),'XDG_DATA_HOME':str(root/'data'),'XDG_CACHE_HOME':str(root/'cache'),
         'XDG_RUNTIME_DIR':str(runtime),'WLR_BACKENDS':'headless','WLR_RENDERER':'pixman','MADWAY_SESSION':'1',
         'LIBGL_ALWAYS_SOFTWARE':'1','GDK_BACKEND':'wayland','GIO_USE_VFS':'local','DBUS_SYSTEM_BUS_ADDRESS':'unix:path='+str(root/'no-system-bus'),

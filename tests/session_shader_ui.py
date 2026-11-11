@@ -30,7 +30,7 @@ def render(area,context):
             assert max(frames[2][i] for i in range(0,len(frames[2]),4))<10,(effect,frames[2][:4])
             assert len(set(frames))==3,effect
             renderer.close();results[effect]=True
-        print('PASS: all nine OpenGL programs compile/link and preserve the original frame at start, produce a distinct midpoint and settle to dark.',flush=True)
+        print('PASS: all configured OpenGL programs compile/link and preserve the original frame at start, produce a distinct midpoint and settle to dark.',flush=True)
     except BaseException as error:errors.append(error)
     GLib.idle_add(lambda:(window.destroy(),Gtk.main_quit(),False)[2]);return True
 area.connect('render',render);window.show_all()
@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='madway-shader-preview-') as tmp:
             if folder:
                 Path(folder).mkdir(parents=True,exist_ok=True);subprocess.run(['grim','-o','HEADLESS-1',str(Path(folder)/('exit-'+effect+'.png'))],check=True)
             assert process.wait(timeout=5)==0,path.read_text()
-    for effect in ('vortex','aurora'):
+    for effect in ('vortex','aurora','zoom-defocus','pinch-lens'):
         subprocess.run([sys.executable,str(repo/'scripts/madway_exit.py'),'--preview','--opening','--mode','shader','--shader',effect,'--duration','300'],check=True,timeout=6)
     with (Path(tmp)/'fallback.log').open('w+') as log:
         process=subprocess.run([sys.executable,str(repo/'scripts/madway_exit.py'),'--preview','--mode','shader','--duration','200'],env={**os.environ,'GDK_GL':'disable'},stdout=log,stderr=log,timeout=7)

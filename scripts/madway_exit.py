@@ -10,7 +10,7 @@ import sys
 import time
 
 MODES={'none','fade','shader'}
-SHADERS={'crt':'CRT standby','iris':'Iris close','dissolve':'Soft dissolve','vortex':'Event horizon','prism':'Prismatic fold','ripple':'Liquid lens','embers':'Ember dissolve','shutter':'Mechanical shutter','aurora':'Aurora veil'}
+SHADERS={'crt':'CRT standby','iris':'Iris close','dissolve':'Soft dissolve','vortex':'Event horizon','prism':'Prismatic fold','ripple':'Liquid lens','embers':'Ember dissolve','shutter':'Mechanical shutter','aurora':'Aurora veil','zoom-defocus':'Zoom defocus · GPUImage','polar-crystal':'Polar crystal · GPUImage','pinch-lens':'Pinch lens · GPUImage','crosshatch':'Crosshatch raster · GPUImage'}
 
 
 def options(config):
@@ -32,8 +32,13 @@ class SessionExitController:
         if operation not in ('logout','reboot','poweroff'):raise ValueError('Unknown session operation')
         if self.operation:return
         self.operation=operation;self.token=secrets.token_hex(16);self.committing=False;self.sound_started=False;self.visual_done=False;self.sound_process=None
-        self.desktop.terminate('session-opening');self.opening_token=None
+        self.desktop.terminate('session-opening');self.opening_token=None;self.release_opening()
         self.desktop.terminate('sound-startup');self.desktop.terminate('sound-logon')
+        token=self.token
+        self.desktop.prepare_exit_audio(lambda:self.launch(token))
+    def launch(self,token):
+        if not self.operation or self.token!=token:return False
+        operation=self.operation
         mode,shader,duration=options(self.desktop.config)
         self.desktop.terminate('desktop-menu');self.desktop.terminate('session-preview');self.desktop.terminate('session-exit')
         if mode=='none':
@@ -48,6 +53,9 @@ class SessionExitController:
         self.watch=self.desktop.GLib.timeout_add(100,self.poll)
     def started(self,token):
         if not self.operation or self.sound_started or not secrets.compare_digest(str(token),self.token):return
+        try:self.desktop.compositor('close-applications')
+        except OSError:pass
+        self.clients_deadline=time.monotonic()+3
         self.sound_started=True;self.sound_deadline=time.monotonic()+8
         event='logout' if self.operation=='logout' else 'shutdown'
         self.sound_process=self.desktop.sound(event)
@@ -61,7 +69,8 @@ class SessionExitController:
         self.commit()
     def opening(self,event):
         mode,shader,duration=options(self.desktop.config)
-        if mode=='none' or not self.desktop.config.getboolean('session_effects','opening',fallback=True):self.desktop.sound(event);return
+        if mode=='none' or not self.desktop.config.getboolean('session_effects','opening',fallback=True):
+            self.release_opening();self.desktop.sound(event);return
         self.opening_token=secrets.token_hex(16);self.opening_event=event
         try:duration=self.desktop.config.getint('session_effects','opening_ms',fallback=700)
         except ValueError:duration=700
@@ -71,14 +80,17 @@ class SessionExitController:
         def check():
             if self.opening_token!=token:return False
             if self.opening_process is not None and self.opening_process.poll()==77:
-                self.opening_token=None;return False
+                self.opening_token=None;self.release_opening();return False
             if self.opening_process is None or self.opening_process.poll() is not None or time.monotonic()>deadline:
-                self.desktop.sound(self.opening_event);self.opening_token=None;return False
+                self.desktop.terminate('session-opening');self.release_opening();self.desktop.sound(self.opening_event);self.opening_token=None;return False
             return True
         self.desktop.GLib.timeout_add(100,check)
+    def release_opening(self,handoff=False):
+        try:self.desktop.compositor('opening-handoff' if handoff else 'opening-ready')
+        except OSError:pass
     def opening_started(self,token):
         if self.opening_token and secrets.compare_digest(str(token),self.opening_token):
-            self.desktop.sound(self.opening_event);self.opening_token=None
+            self.release_opening(True);self.desktop.sound(self.opening_event);self.opening_token=None
     def poll(self):
         process=self.process
         try:state=json.loads((self.desktop.directory/'desktop.json').read_text())
@@ -110,6 +122,13 @@ class SessionExitController:
                 self.visual_done=True;self.started(token);self.wait_or_commit()
     def commit(self):
         if not self.operation or self.committing:return
+        try:state=json.loads((self.desktop.directory/'desktop.json').read_text())
+        except (OSError,ValueError):state={}
+        if state.get('all_windows',state.get('windows',[])):
+            if time.monotonic()<self.clients_deadline:
+                if not self.watch:self.watch=self.desktop.GLib.timeout_add(50,self.poll)
+                return
+            self.cancel();self.desktop.notify('error','Exit cancelled','Some applications did not close. Save your work and try again.');return
         self.committing=True
         if self.watch:self.desktop.GLib.source_remove(self.watch);self.watch=0
         operation=self.operation
@@ -121,6 +140,7 @@ class SessionExitController:
             # bounded hold; it cannot leave the desktop covered indefinitely.
             self.operation=None;self.token=None;self.committing=False
     def cancel(self):
+        self.desktop.restore_exit_audio()
         if self.watch:self.desktop.GLib.source_remove(self.watch);self.watch=0
         self.desktop.terminate('session-exit')
         if self.sound_started:

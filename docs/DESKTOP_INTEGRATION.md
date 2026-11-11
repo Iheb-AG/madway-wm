@@ -134,3 +134,8 @@ They exercise actual Waybar, Konsole, Kitty, foreign-toplevel requests, a
 synthetic StatusNotifier application, PNG files/clipboard, region/cancel
 behavior, all dock edges, light/dark themes, long audio names, locking and
 installation staging. The tray test does not open a personal Telegram account.
+
+Task buttons show a small window-image popup after hovering briefly. This does
+not depend on the system's GTK tooltip preference. The preview refreshes while
+hovered, stays on the task's monitor for all four panel positions, takes no
+keyboard/pointer focus, and closes on leaving, clicking, locking or sleep.

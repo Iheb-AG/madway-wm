@@ -27,13 +27,15 @@ with tempfile.TemporaryDirectory(prefix='madway-installer-test-') as tmp:
     assert (binaries/'madway_files.py').is_file()
     assert (binaries/'madway_sound.py').is_file() and (binaries/'madway_apps.py').is_file()
     assert (binaries/'madway_settings.py').is_file()
-    for name in ('madway_exit.py','madway_exit_ui.py','madway_gl.py'):assert (binaries/name).is_file()
+    for name in ('madway_exit.py','madway_exit_ui.py','madway_gl.py','madway_capture.py','madway_appearance.py','madway_playback.py'):assert (binaries/name).is_file()
     for name in ('session.vert','crt.frag','iris.frag','dissolve.frag'):assert (data_dir/'shaders'/name).is_file()
     assert (binaries/'madway_system.py').is_file() and (binaries/'madway_widgets.py').is_file()
     assert (binaries/'madway_spotlight.py').is_file() and (binaries/'madway_media.py').is_file()
     for stylesheet in ('wofi.css','switcher.css','osd.css','audio.css','utilities.css'):
         assert (data_dir/stylesheet).is_file()
     assert (data_dir/'settings.css').is_file()
+    for theme in ('windows-xp.css','windows-vista.css'):assert (data_dir/theme).is_file()
+    assert (data_dir/'licenses/GPUImage2-BSD-3-Clause.txt').is_file()
     assert (data_dir/'argent-common.css').is_file() and (data_dir/'argent-panel.css').is_file()
     local_wallpaper=repo/'share/madway/wallpapers/Abstract Blue.png'
     if local_wallpaper.is_file():

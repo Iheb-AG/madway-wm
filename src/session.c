@@ -1,4 +1,5 @@
 #include "session.h"
+#include "startup.h"
 #include "taskbar.h"
 #include "preview.h"
 #include "layer.h"
@@ -9,6 +10,7 @@
 #include "input.h"
 #include "monitors.h"
 #include "window.h"
+#include "motion.h"
 #include "theme.h"
 #include "power.h"
 #include "lock.h"
@@ -202,7 +204,7 @@ void madway_session_start(struct madway_server *server)
     char pid[32];
     snprintf(pid, sizeof(pid), "%ld", (long)getpid());
     char *arguments[] = {(char *)helper, "serve", "--compositor-pid", pid, NULL};
-    madway_spawn(server, arguments, &server->session_pid);
+    if (!madway_spawn(server, arguments, &server->session_pid)) madway_startup_release(server);
     g_free(sibling);
     g_free(directory);
     g_free(executable);
@@ -268,6 +270,9 @@ static int handle_control(int fd, uint32_t mask, void *data)
     while ((length = recv(fd, command, sizeof(command) - 1, 0)) > 0)
     {
         command[length] = '\0';
+        if (!strcmp(command,"opening-handoff")) {madway_startup_request(server);continue;}
+        if (!strcmp(command,"opening-ready")) {madway_startup_release(server);continue;}
+        if (!strcmp(command,"opening-snapshot")) {madway_preview_opening(server);continue;}
         int lock_pid;
         unsigned lock_serial;
         if(sscanf(command,"lock-request %u",&lock_serial)==1){madway_lock_request(server,lock_serial);continue;}
@@ -321,7 +326,7 @@ static int handle_control(int fd, uint32_t mask, void *data)
             wl_list_for_each(target, &server->layout_views, layout_link)
                 if (target->id == identity && target->mapped && target->output && target->workspace==target->output->workspace) {
                     if (target == server->focused_view && !target->minimized) madway_set_minimized(target,true);
-                    else madway_focus_view(server,target);
+                    else {bool restoring=target->minimized;madway_focus_view(server,target);if (!restoring) madway_motion_activate(target);}
                     break;
                 }
         }
@@ -350,6 +355,11 @@ static int handle_control(int fd, uint32_t mask, void *data)
             madway_set_minimized(server->focused_view, true);
         else if (strcmp(command, "fullscreen") == 0 && server->focused_view != NULL)
             madway_set_fullscreen(server->focused_view, !server->focused_view->fullscreen);
+        else if (strcmp(command,"close-applications")==0) {
+            struct madway_view *view;
+            wl_list_for_each(view,&server->views,link)
+                if (view->mapped && !view->desktop_overlay) wlr_xdg_toplevel_send_close(view->toplevel);
+        }
         else if (strcmp(command, "close") == 0 && server->focused_view != NULL)
             wlr_xdg_toplevel_send_close(server->focused_view->toplevel);
     }
@@ -422,6 +432,8 @@ void madway_session_publish_state(struct madway_server *server)
             if(server->locked || !entry->mapped || entry->desktop_overlay || (!list && (!current || entry->output!=active)))continue;
             g_string_append_printf(text,"%s{\"id\":%u,\"focused\":%s,\"title\":",first?"":",",entry->id,entry==server->focused_view?"true":"false");
             append_json_string(text,entry->toplevel->title);
+            pid_t client_pid;wl_client_get_credentials(wl_resource_get_client(entry->toplevel->resource),&client_pid,NULL,NULL);
+            g_string_append_printf(text,",\"pid\":%d",(int)client_pid);
             g_string_append(text,",\"app_id\":");append_json_string(text,entry->toplevel->app_id);
             g_string_append(text,",\"output\":");append_json_string(text,entry->output?entry->output->output->name:"");
             g_string_append_printf(text,",\"workspace\":%u,\"visible_workspace\":%s,\"preview\":%u,\"minimized\":%s,\"floating\":%s,\"maximized\":%s,\"fullscreen\":%s}",
