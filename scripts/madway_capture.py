@@ -47,6 +47,36 @@ def capture_control(operation,identity,value=None,run=command):
     run(['pactl',*argv])
 
 
+def playback_snapshot(run=command):
+    info=json.loads(run(['pactl','--format=json','info']))
+    return dict(default=info.get('default_sink_name'),
+        sinks=[row for row in json.loads(run(['pactl','--format=json','list','sinks']))
+               if not row.get('name','').startswith('madway_exit_')],
+        streams=json.loads(run(['pactl','--format=json','list','sink-inputs'])))
+
+
+def playback_control(operation,identity,value=None,run=command):
+    identity=str(int(identity))
+    if int(identity)<0:raise ValueError('Invalid output')
+    if operation=='default':
+        run(['pactl','set-default-sink',identity])
+        # A default change alone can leave an existing browser on its old HDMI
+        # route. This explicit "Use output" action also moves current playback.
+        for row in json.loads(run(['pactl','--format=json','list','sink-inputs'])):
+            try:run(['pactl','move-sink-input',str(int(row['index'])),identity])
+            except RuntimeError:pass # Applications may close between snapshots.
+        return
+    if operation=='route':
+        target=int(value)
+        if target<0:raise ValueError('Invalid output route')
+        argv=['move-sink-input',identity,str(target)]
+    elif operation=='mute':argv=['set-sink-input-mute',identity,'1' if value else '0']
+    elif operation=='port' and isinstance(value,str) and value and len(value)<256 and not any(ord(c)<32 for c in value):
+        argv=['set-sink-port',identity,value]
+    else:raise ValueError('Invalid playback operation')
+    run(['pactl',*argv])
+
+
 def camera_snapshot(root=Path('/sys/class/video4linux'),dev=Path('/dev')):
     rows=[]
     if not root.exists():return rows
@@ -113,6 +143,111 @@ class CapturePane(Gtk.Box):
             def finish():
                 self.busy=False
                 if self.alive:done(result,error)
+                return False
+            GLib.idle_add(finish)
+        threading.Thread(target=worker,daemon=True).start()
+
+
+class PlaybackPane(CapturePane):
+    __gtype_name__='MadwayPlaybackPane'
+    def __init__(self,directory):
+        super().__init__(directory);self.sinks=[];self.updating=False
+        self.choice=Gtk.ComboBoxText();self.choice.connect('changed',lambda w:self.select())
+        self.pack_start(self.choice,False,False,0)
+        self.port=Gtk.ComboBoxText();self.port.connect('changed',lambda w:None if self.updating else self.control('port',w.get_active_id()))
+        self.pack_start(self.port,False,False,0)
+        toolbar=Gtk.Box(spacing=5);self.pack_start(toolbar,False,False,0)
+        self.use=Gtk.Button(label='Use output');self.use.connect('clicked',lambda w:self.control('default'));toolbar.pack_start(self.use,False,False,0)
+        self.test=Gtk.Button(label='Test speakers');self.test.connect('clicked',self.test_speakers);toolbar.pack_start(self.test,False,False,0)
+        refresh=Gtk.Button(label='Refresh');refresh.connect('clicked',lambda w:self.refresh());toolbar.pack_end(refresh,False,False,0)
+        self.apps=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5);self.pack_start(self.apps,False,False,0)
+        self.refresh()
+
+    def stop(self):
+        super().stop()
+        if hasattr(self,'test'):self.test.set_label('Test speakers')
+
+    def selected(self):return next((row for row in self.sinks if str(row['index'])==self.choice.get_active_id()),None)
+
+    def refresh(self):self.async_call(playback_snapshot,self.loaded)
+
+    def loaded(self,state,error):
+        if error:self.status.set_text('Cannot reach the audio server: '+error);return
+        previous=self.choice.get_active_id();self.sinks=state['sinks'];self.updating=True;self.choice.remove_all()
+        for row in self.sinks:self.choice.append(str(row['index']),row.get('description',row['name']))
+        default=next((str(row['index']) for row in self.sinks if row['name']==state['default']),None)
+        self.choice.set_active_id(previous if any(str(row['index'])==previous for row in self.sinks) else default or (str(self.sinks[0]['index']) if self.sinks else ''))
+        self.updating=False;self.select()
+        for child in self.apps.get_children():child.destroy()
+        self.apps.add(Gtk.Label(label='Playing applications',xalign=0))
+        if not state['streams']:self.apps.add(Gtk.Label(label='Play a video or song, then refresh to check its mute and output.',xalign=0,wrap=True,max_width_chars=46))
+        for stream in state['streams']:
+            line=Gtk.Box(spacing=5);props=stream.get('properties',{})
+            label=Gtk.Label(label=props.get('application.name','Application'),xalign=0)
+            label.set_ellipsize(3);label.set_max_width_chars(16);label.set_width_chars(1)
+            line.pack_start(label,True,True,0)
+            mute=Gtk.Button(label='Unmute' if stream.get('mute') else 'Mute')
+            mute.connect('clicked',lambda w,row=stream:self.control('mute',not row.get('mute'),row['index']))
+            line.pack_start(mute,False,False,0)
+            route=Gtk.ComboBoxText()
+            for sink in self.sinks:route.append(str(sink['index']),sink.get('description',sink['name']))
+            route.set_active_id(str(stream.get('sink','')));route.set_hexpand(True)
+            route.connect('changed',lambda w,identity=stream['index']:self.control('route',w.get_active_id(),identity))
+            line.pack_start(route,True,True,0);self.apps.add(line)
+        for combo in [self.choice,self.port,*[w for line in self.apps.get_children() if isinstance(line,Gtk.Box) for w in line.get_children() if isinstance(w,Gtk.ComboBoxText)]]:
+            for renderer in combo.get_cells():
+                if isinstance(renderer,Gtk.CellRendererText):renderer.set_property('ellipsize',3);renderer.set_property('max-width-chars',24)
+        self.apps.show_all()
+
+    def select(self):
+        if self.updating:return
+        self.stop();sink=self.selected();self.updating=True;self.port.remove_all()
+        self.use.set_sensitive(bool(sink));self.test.set_sensitive(bool(sink))
+        if sink:
+            for port in sink.get('ports',[]):
+                unavailable=port.get('availability') in ('no','not available')
+                self.port.append(port['name'],port.get('description',port['name'])+(' (unplugged)' if unavailable else ''))
+            self.port.set_active_id(sink.get('active_port'))
+            levels=[float(v['value_percent'].rstrip('%')) for v in sink.get('volume',{}).values()]
+            text='Selected output: '+sink.get('description',sink['name'])
+            if sink.get('mute'):text+=' · muted at device level'
+            elif levels and max(levels)==0:text+=' · volume is zero'
+            self.status.set_text(text)
+        else:self.status.set_text('No playback output available. Check the audio services and sound-card profile.')
+        self.port.set_sensitive(bool(sink and sink.get('ports')));self.updating=False
+
+    def control(self,operation,value=None,identity=None):
+        if self.busy:return
+        sink=self.selected()
+        if identity is None:
+            if not sink:return
+            identity=sink['index']
+        self.stop()
+        def done(result,error):
+            if error:self.status.set_text(error)
+            else:self.refresh()
+        self.async_call(lambda:playback_control(operation,identity,value),done)
+
+    def test_speakers(self,*args):
+        if self.testing:self.stop();return
+        sink=self.selected()
+        if not sink:return
+        sample=next((path for path in (Path('/usr/share/sounds/alsa/Front_Center.wav'),
+            Path('/usr/share/sounds/freedesktop/stereo/audio-test-signal.oga')) if path.is_file()),None)
+        if not sample:self.status.set_text('No system speaker-test sample installed. Install alsa-utils, then try again.');return
+        self.stop();generation=self.generation;self.testing=True;self.test.set_label('Stop test')
+        try:
+            self.process=subprocess.Popen(['pw-play','--target',sink['name'],'--volume','0.5',str(sample)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        except OSError as error:self.stop();self.status.set_text(str(error));return
+        process=self.process
+        def worker():
+            try:
+                _,err=process.communicate(timeout=8)
+                error=err.decode(errors='replace').strip() if process.returncode else ''
+            except subprocess.TimeoutExpired:process.kill();process.communicate();error='Speaker test timed out.'
+            def finish():
+                if self.alive and generation==self.generation:
+                    self.stop();self.status.set_text(error or 'Test finished. If you heard it, check the application mute and output route below.')
                 return False
             GLib.idle_add(finish)
         threading.Thread(target=worker,daemon=True).start()

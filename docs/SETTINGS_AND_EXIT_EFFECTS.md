@@ -2,13 +2,40 @@
 
 Settings uses one searchable source list under Appearance, Workspace, Input,
 Connectivity and System. All page categories stay visible in the scrolling list;
-there are no expanding group tabs. Navigation preserves draft edits. The source
-list matches the window background and marks the selected page with a quiet
-accent rail. Controls use flat compact buttons, square check inputs, integrated
-numeric fields and minimal section spacing. Long forms scroll above a fixed footer.
+there are no expanding group tabs. The reference-style sidebar uses aligned colored
+category icons and a rounded selection. Back/forward navigation and search preserve
+draft edits. Each page has an icon/title summary and compact row cards grouped by
+section. Controls use small switches and single-outline fields. Long forms scroll
+above a fixed footer, with a compact page summary. Light, dark
+and the separate Prism glass preset share the same layout.
 
 Session sound paths live under System → Sounds. Microphone and Camera pages are
 under Input. The Settings window keeps its compositor opening animation.
+
+## Panel dropdown animation
+
+Panel menus (applications/user menu, workspaces, window actions, volume, calendar,
+battery, session and timer controls) fade and expand gently from their panel edge.
+Cascading menus reveal toward the available side; a cascade near the right edge
+opens to the left while its parent remains anchored. Submenu replacement cancels
+the previous reveal, so quick hovering never leaves a delayed menu behind.
+
+The default is 240 ms with a responsive cubic Bézier `(0.2, 0.8, 0.2, 1)` settle.
+GTK frame-clock callbacks follow the monitor's refresh cadence, including 100 Hz;
+no animation timer runs after completion. The live widgets retain their final
+allocation: text and sliders are not resized between frames. The reveal mask and
+Wayland input region stay in sync, so hidden portions do not catch clicks.
+Keyboard navigation finishes the reveal immediately and retains its usual focus.
+
+Set **Appearance → Animations → Panel menu animation (ms)** (80–600 ms), or turn
+**Desktop effects** off for immediate menus. This uses `motion.menu_ms` and the
+existing `motion.effects` preference. Media-key volume/brightness feedback keeps
+its own path and timing. Menus dismiss immediately on outside click or Escape;
+only their appearance/page/cascade reveals animate.
+
+Validation uses private 100 Hz outputs, intermediate opacity/reveal frames,
+unchanged form geometry, input-mask checks, all panel edges, rapid submenu
+replacement, corner anchoring and disabled-effect behavior.
 
 ## Select an exit effect
 
@@ -134,8 +161,18 @@ the output device and microphone are not muted. New playback streams are isolate
 until the action finishes. Nested sessions only quiet streams belonging to their
 client processes, leaving the host desktop's playback alone.
 
+Isolation routes eligible streams into a disposable `module-null-sink` output;
+it never changes application mute or volume. The previous approach could leave a
+closed browser's mute flag remembered by the audio server. Temporary outputs are
+not selected as the default and have low session priority. If the audio backend
+cannot create one, madway logs the failure and continues without isolation.
+
 If applications remain open, including an unsaved-work dialog, exit is cancelled
 after a short grace period. Escape, locking, rejected power actions and the audio
-guard watchdog restore only the stream mute states changed by madway. Already
+guard watchdog restore surviving streams to their original outputs and unload
+the temporary output. An output that disappeared falls back to the current default.
+Changed stream identities and user-selected new routes are respected. Session
+teardown waits for cleanup; the next native startup also removes abandoned madway
+outputs whose owner process has died. Already
 closed applications are not relaunched. A preview never closes apps or isolates
 playback. Animation and sound still run concurrently.

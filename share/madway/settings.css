@@ -1,55 +1,67 @@
-/* Compact preferences: one source list, flat controls and square check inputs. */
+/* Compact reference layout: icon source list, page summary, grouped row cards. */
 .settings-window { background: @background@; color: @text@; }
-.settings-window * { font-size: 11px; text-shadow: none; }
+.settings-window * { font-family: sans-serif; font-size: 11px; text-shadow: none; }
 .settings-window label { color: @text@; padding: 0; }
-.settings-window .settings-navigation { background: @background@; border-right: 1px solid alpha(@border@,.35); padding-right: 6px; }
-.settings-window .settings-navigation scrolledwindow, .settings-window .settings-navigation viewport, .settings-window .settings-source-list { background: @background@; border: 0; }
-.settings-window .settings-source-list row { min-height: 18px; padding: 2px 6px 2px 10px; margin: 0; border: 0; border-left: 2px solid transparent; border-radius: 0; background: transparent; }
+.settings-window .settings-navigation { background: alpha(@surface@,.42); border-right: 1px solid alpha(@border@,.13); padding: 12px 8px 8px; }
+.settings-window scrolledwindow, .settings-window viewport, .settings-window .settings-source-list, .settings-window .settings-form { background: transparent; border: 0; }
+.settings-window .settings-source-list row { min-height: 28px; padding: 2px 6px; margin: 1px 0; border: 0; border-radius: 6px; background: transparent; }
 .settings-window .settings-source-list row label { color: @text@; font-size: 11px; }
-.settings-window .settings-source-list row:hover { background: alpha(@accent@,.07); }
-.settings-window .settings-source-list row:selected { background: alpha(@accent@,.13); border-left-color: @accent@; }
-.settings-window .settings-source-list row:selected label { color: @text@; }
-.settings-window .settings-source-list row.settings-nav-heading { padding: 8px 0 2px; border: 0; background: transparent; }
-.settings-window button.settings-nav-group { min-height: 14px; padding: 0 4px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.settings-window button.settings-nav-group label { color: @text@; opacity: .6; font-size: 10px; font-weight: 600; }
-.settings-window .settings-heading { font-size: 14px; font-weight: 600; padding: 1px 0; }
+.settings-window .settings-source-list row:hover { background: alpha(@accent@,.1); }
+.settings-window .settings-source-list row:selected { background: @active@; }
+.settings-window .settings-source-list row:selected label { color: @selection_text@; }
+.settings-window .settings-source-list row.settings-nav-heading { min-height: 12px; padding: 10px 0 3px; margin: 0; background: transparent; }
+.settings-window button.settings-nav-group { min-height: 12px; padding: 0 5px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.settings-window button.settings-nav-group label { color: @text@; opacity: .58; font-size: 10px; font-weight: 600; }
+.settings-window .settings-page-icon { border: 0; border-radius: 5px; padding: 3px; color: white; -gtk-icon-shadow: none; }
+.settings-window .settings-icon-blue { background: #3287df; }
+.settings-window .settings-icon-violet { background: #8d64c8; }
+.settings-window .settings-icon-cyan { background: #209cb0; }
+.settings-window .settings-icon-green { background: #419965; }
+.settings-window .settings-icon-orange { background: #c6783e; }
+.settings-window .settings-icon-red { background: #ca5262; }
+.settings-window .settings-icon-slate { background: #6a7480; }
+.settings-window .settings-hero { background: alpha(@surface@,.65); border-radius: 10px; padding: 10px 12px; }
+.settings-window .settings-hero .settings-page-icon { padding: 6px; border-radius: 9px; }
+.settings-window .settings-heading { font-size: 18px; font-weight: 700; padding: 1px 0; }
 .settings-window .settings-description { font-size: 11px; color: @text@; opacity: .65; }
-.settings-window .settings-section { font-size: 11px; font-weight: 600; padding: 8px 0 3px; border: 0; }
+.settings-window .settings-section { font-size: 11px; font-weight: 600; padding: 0 2px; border: 0; }
 .settings-window .settings-match { color: @accent@; font-weight: 600; }
-.settings-window .settings-status { padding: 4px 10px; }
-.settings-window .settings-footer { border-top: 1px solid alpha(@border@,.35); padding-top: 7px; }
+.settings-window .settings-status { padding: 4px 12px; }
+.settings-window .settings-footer { border-top: 1px solid alpha(@border@,.15); padding-top: 8px; }
 .settings-window button, .settings-window combobox button {
-    min-height: 21px; min-width: 0; padding: 1px 7px; margin: 0; border: 1px solid alpha(@border@,.7); border-radius: 2px;
-    background-image: none; background-color: @surface@; color: @text@; box-shadow: none; outline-style: none;
+    min-height: 22px; min-width: 0; padding: 1px 8px; margin: 0; border: 1px solid alpha(@border@,.4); border-radius: 5px;
+    background-image: none; background-color: alpha(@background@,.65); color: @text@; box-shadow: none;
 }
-.settings-window button:hover, .settings-window button:focus { border-color: @accent@; background: alpha(@accent@,.09); }
-.settings-window button:active, .settings-window button.settings-primary { background: @active@; border-color: @accent@; }
+.settings-window button:hover { border-color: alpha(@accent@,.7); background: alpha(@accent@,.12); }
+.settings-window button:focus { outline-color: @accent@; outline-width: 1px; outline-offset: 1px; outline-style: solid; }
+.settings-window button:active, .settings-window button.settings-primary { background: @active@; border-color: transparent; }
 .settings-window button:active label, .settings-window button.settings-primary label { color: @selection_text@; }
-.settings-window entry, .settings-window spinbutton { min-height: 21px; min-width: 0; padding: 1px 5px; border: 1px solid alpha(@border@,.7); border-radius: 2px; background-image: none; background-color: @surface@; color: @text@; box-shadow: none; }
+.settings-window entry, .settings-window spinbutton { min-height: 22px; min-width: 0; padding: 1px 6px; border: 1px solid alpha(@border@,.35); border-radius: 5px; background-image: none; background-color: alpha(@background@,.65); color: @text@; box-shadow: none; }
 .settings-window entry:focus, .settings-window spinbutton:focus { border-color: @accent@; box-shadow: none; }
+.settings-window .settings-navigation entry { min-height: 26px; border-radius: 7px; }
 .settings-window combobox, .settings-window combobox > box { padding: 0; border: 0; background: transparent; box-shadow: none; }
-.settings-window spinbutton { min-width: 88px; padding: 0; }
-.settings-window spinbutton entry { min-width: 38px; min-height: 21px; border: 0; border-radius: 0; padding: 0 5px; background: transparent; box-shadow: none; }
-.settings-window spinbutton button { min-width: 18px; min-height: 21px; padding: 0 2px; border: 0; border-left: 1px solid alpha(@border@,.35); border-radius: 0; background: transparent; box-shadow: none; }
-.settings-window checkbutton { min-height: 21px; padding: 0; background: transparent; color: @text@; }
-.settings-window checkbutton check { min-width: 12px; min-height: 12px; margin: 0 2px; padding: 0; border: 1px solid @border@; border-radius: 1px; background: @surface@; box-shadow: none; color: @selection_text@; -gtk-icon-source: none; }
+.settings-window spinbutton { min-width: 84px; padding: 0; }
+.settings-window spinbutton entry { min-width: 36px; min-height: 22px; border: 0; border-radius: 0; padding: 0 5px; background: transparent; box-shadow: none; }
+.settings-window spinbutton button { min-width: 17px; min-height: 22px; padding: 0 2px; border: 0; border-left: 1px solid alpha(@border@,.18); border-radius: 0; background: transparent; box-shadow: none; }
+.settings-window checkbutton { min-height: 22px; padding: 0; background: transparent; color: @text@; }
+.settings-window checkbutton check { min-width: 12px; min-height: 12px; margin: 0 2px; padding: 0; border: 1px solid @border@; border-radius: 3px; background: @surface@; box-shadow: none; color: @selection_text@; -gtk-icon-source: none; }
 .settings-window checkbutton check:checked { background: @active@; border-color: @accent@; -gtk-icon-source: -gtk-icontheme("object-select-symbolic"); }
-.settings-window checkbutton:focus check { border-color: @accent@; }
-.settings-window switch { min-width: 30px; min-height: 14px; padding: 1px; border: 1px solid @border@; border-radius: 2px; background: @surface@; box-shadow: none; }
-.settings-window switch:checked { background: @active@; }
-.settings-window switch slider { min-width: 12px; min-height: 12px; border: 0; border-radius: 1px; background: @text@; box-shadow: none; }
+.settings-window switch { min-width: 30px; min-height: 16px; padding: 2px; border: 0; border-radius: 10px; background: alpha(@muted@,.4); box-shadow: none; }
+.settings-window switch:checked { background: @accent@; }
+.settings-window switch slider { min-width: 14px; min-height: 14px; border: 0; border-radius: 9px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
 .settings-window switch label { color: transparent; font-size: 0; }
-.settings-window scale { min-height: 19px; padding: 1px 5px; }
-.settings-window scale trough { min-height: 3px; border: 0; border-radius: 1px; background: alpha(@border@,.5); }
-.settings-window scale highlight { background: @accent@; border: 0; border-radius: 1px; }
-.settings-window scale slider { min-width: 7px; min-height: 11px; margin: 0; padding: 0; border: 1px solid @border@; border-radius: 1px; background: @text@; box-shadow: none; }
+.settings-window scale { min-height: 20px; padding: 1px 5px; }
+.settings-window scale trough { min-height: 3px; border: 0; border-radius: 2px; background: alpha(@muted@,.3); }
+.settings-window scale highlight { background: @accent@; border: 0; border-radius: 2px; }
+.settings-window scale slider { min-width: 10px; min-height: 10px; margin: 0; padding: 0; border: 1px solid alpha(@border@,.4); border-radius: 6px; background: @surface@; box-shadow: none; }
 .settings-window scrollbar { min-width: 5px; padding: 0; margin: 0; border: 0; background: transparent; }
 .settings-window scrollbar trough { background: transparent; border: 0; }
-.settings-window scrollbar slider { min-width: 4px; min-height: 24px; margin: 1px; border: 0; border-radius: 1px; background: alpha(@text@,.25); }
-.settings-window .dock-pin-list, .settings-window .wallpaper-images { background: @surface@; color: @text@; border: 1px solid alpha(@border@,.5); border-radius: 2px; }
+.settings-window scrollbar slider { min-width: 4px; min-height: 24px; margin: 1px; border: 0; border-radius: 3px; background: alpha(@text@,.25); }
+.settings-window .dock-pin-list, .settings-window .wallpaper-images { background: transparent; color: @text@; border: 1px solid alpha(@border@,.2); border-radius: 5px; }
 .settings-window .dock-pin-list row, .settings-window .wallpaper-images row { padding: 3px; background: transparent; }
 .settings-window .dock-pin-list button { min-width: 18px; padding: 0 3px; }
-.settings-window levelbar trough { background: @surface@; border: 1px solid @border@; padding: 1px; border-radius: 1px; }
+.settings-window .settings-history button { min-width: 24px; padding: 0 3px; background: transparent; border-color: transparent; }
+.settings-window levelbar trough { background: @background@; border: 0; padding: 1px; border-radius: 3px; }
 .settings-window levelbar block.filled { background: @accent@; border: 0; min-height: 4px; }
 .settings-window levelbar block.empty { background: @background@; border: 0; min-height: 4px; }
 .settings-window :disabled { opacity: .5; }

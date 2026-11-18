@@ -9,7 +9,9 @@
 #include "workspace.h"
 #include "input.h"
 #include "animation.h"
+#include "motion_profile.h"
 #include <math.h>
+#include <glib.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -24,7 +26,11 @@ struct madway_motion {
     double started,progress,duration_ms;
     double opacity_from,opacity;
     bool running,reveal,minimizing,restoring,continuing;
+    bool opening,fade_only,dissolve,incoming_ready;
+    enum madway_motion_curve curve;
 };
+
+enum motion_kind {MOTION_NORMAL,MOTION_OPENING,MOTION_MAXIMIZE};
 
 void madway_motion_finish(struct madway_server *server)
 {
@@ -55,6 +61,15 @@ static struct wlr_box window_box(struct madway_view *view,bool configured)
         width=view->toplevel->scheduled.width;height=view->toplevel->scheduled.height;
     }
     return (struct wlr_box){view->scene_tree->node.x,view->scene_tree->node.y,width+2*border,height+2*border+title};
+}
+
+static struct wlr_buffer *snapshot(struct madway_view *view,uint64_t budget)
+{
+    struct wlr_box box=window_box(view,false);
+    double scale=view->output->output->scale;
+    double bytes=ceil(box.width*scale)*ceil(box.height*scale)*4;
+    if(box.width<=0 || box.height<=0 || !isfinite(bytes) || bytes>budget)return NULL;
+    return madway_window_snapshot_alpha(view);
 }
 
 static struct wlr_box minimize_target(struct madway_motion *motion)
@@ -99,16 +114,22 @@ static void place_image(struct madway_motion *motion,struct wlr_scene_buffer *im
 
 static void position(struct madway_motion *motion,double progress)
 {
-    double eased=madway_animation_ease(progress);
-    struct wlr_box box={
-        motion->from.x+(int)lround((motion->to.x-motion->from.x)*eased),
-        motion->from.y+(int)lround((motion->to.y-motion->from.y)*eased),
-        motion->from.width+(int)lround((motion->to.width-motion->from.width)*eased),
-        motion->from.height+(int)lround((motion->to.height-motion->from.height)*eased)};
+    struct wlr_box box=madway_motion_interpolate(motion->from,motion->to,motion->curve,progress);
+    if(motion->dissolve) {
+        double blend=CLAMP(madway_motion_curve_value(motion->curve,progress),0,1);
+        motion->visual=blend>.5?motion->to:motion->from;
+        motion->opacity=blend>.5?blend:motion->opacity_from*(1-blend);
+        place_image(motion,motion->image,motion->from,(float)(motion->opacity_from*(1-blend)));
+        if(motion->incoming)place_image(motion,motion->incoming,motion->to,(float)blend);
+        return;
+    }
     motion->visual=box;
     // Keep the window solid through most of the journey, then gently disappear.
+    enum madway_motion_curve fade_curve=motion->curve==MADWAY_CURVE_SPRING?MADWAY_CURVE_RESPONSIVE:motion->curve;
+    double fade=motion->opening?CLAMP(madway_motion_curve_value(fade_curve,fmin(1,progress/(motion->fade_only?1:.65))),0,1):
+        madway_animation_ease(fmin(1,progress/.24));
     double opacity=motion->minimizing?motion->opacity_from*(1-madway_animation_ease(fmax(0,(progress-.72)/.28))):
-        motion->opacity_from+(1-motion->opacity_from)*madway_animation_ease(fmin(1,progress/.24));
+        motion->opacity_from+(1-motion->opacity_from)*fade;
     motion->opacity=opacity;
     place_image(motion,motion->image,box,(float)opacity);
     if (motion->incoming) place_image(motion,motion->incoming,box,(float)madway_animation_ease(fmax(0,(progress-.25)/.65)));
@@ -141,16 +162,25 @@ void madway_motion_frame(struct madway_output *output,double now)
 void madway_motion_commit(struct madway_view *view)
 {
     struct madway_motion *motion=view->server->window_motion;
-    if (!motion || motion->view!=view || !motion->running || motion->minimizing || motion->restoring || motion->incoming) return;
+    if (!motion || motion->view!=view || !motion->running || motion->minimizing || motion->restoring || motion->incoming_ready) return;
     struct wlr_box box=window_box(view,false);
     if (box.width!=motion->to.width || box.height!=motion->to.height) return;
-    struct wlr_buffer *buffer=madway_window_snapshot(view);
+    uint64_t used=(uint64_t)motion->image->buffer->width*motion->image->buffer->height*4;
+    uint64_t budget=64*1024*1024;
+    if(!motion->opening)budget=used<budget?budget-used:0;
+    struct wlr_buffer *buffer=snapshot(view,budget);
     if (!buffer) return;
-    motion->incoming=wlr_scene_buffer_create(motion->tree,buffer);wlr_buffer_drop(buffer);
-    if (motion->incoming) position(motion,motion->progress);
+    if(motion->opening) {
+        wlr_scene_buffer_set_buffer(motion->image,buffer);motion->incoming_ready=true;
+    } else if(motion->incoming) {
+        wlr_scene_buffer_set_buffer(motion->incoming,buffer);motion->incoming_ready=true;
+    } else {
+        motion->incoming=wlr_scene_buffer_create(motion->tree,buffer);motion->incoming_ready=motion->incoming!=NULL;
+    }
+    wlr_buffer_drop(buffer);position(motion,motion->progress);
 }
 
-void madway_motion_prepare(struct madway_view *view)
+static void prepare(struct madway_view *view,enum motion_kind kind)
 {
     struct madway_server *server=view->server;
     struct wlr_buffer *retained=NULL;
@@ -160,19 +190,26 @@ void madway_motion_prepare(struct madway_view *view)
         struct wlr_scene_buffer *image=previous->incoming && previous->progress>.55?previous->incoming:previous->image;
         retained=wlr_buffer_lock(image->buffer);visual=previous->visual;opacity=previous->opacity;
     }
-    madway_transition_finish(server); // Also settles a previous window animation.
-    if (!server->config.window_animate || !view->mapped || view->desktop_overlay || view->fullscreen ||
+    madway_motion_finish(server);
+    if(view->output)madway_transition_finish_output(view->output);
+    bool enabled=kind==MOTION_OPENING?server->config.open_animate:
+        server->config.window_animate && (kind!=MOTION_MAXIMIZE || server->config.maximize_style!=MADWAY_MAXIMIZE_NONE);
+    if (!enabled || !view->mapped || view->desktop_overlay || (view->fullscreen && kind!=MOTION_OPENING) ||
             !view->output || !view->output->output->enabled || view->workspace!=view->output->workspace ||
             server->locked || server->sleeping || server->shutting_down || (server->session && !server->session->active) ||
             (!view->scene_tree->node.enabled && !view->minimized)) {
         if (retained) wlr_buffer_unlock(retained);
         return;
     }
-    struct wlr_buffer *buffer=retained?retained:madway_window_snapshot(view);
+    struct wlr_buffer *buffer=retained?retained:snapshot(view,64*1024*1024);
     if (!buffer) return;
     struct madway_motion *motion=calloc(1,sizeof(*motion));
     if (motion) {
         motion->duration_ms=server->config.window_animation_ms;
+        motion->curve=MADWAY_CURVE_GENTLE;motion->opening=kind==MOTION_OPENING;
+        if(kind==MOTION_OPENING){motion->duration_ms=server->config.open_animation_ms;motion->curve=server->config.open_curve;}
+        if(kind==MOTION_MAXIMIZE){motion->duration_ms=server->config.maximize_animation_ms;motion->curve=server->config.maximize_curve;
+            motion->dissolve=server->config.maximize_style==MADWAY_MAXIMIZE_DISSOLVE;}
         motion->view=view;motion->continuing=retained!=NULL;motion->opacity_from=opacity;
         motion->from=retained?visual:window_box(view,false);madway_view_output_box(view,&motion->bounds);
         motion->tree=wlr_scene_tree_create(server->desktop_tree);
@@ -187,6 +224,9 @@ void madway_motion_prepare(struct madway_view *view)
     wlr_scene_node_set_enabled(&motion->tree->node,false);
 }
 
+void madway_motion_prepare(struct madway_view *view){prepare(view,MOTION_NORMAL);}
+void madway_motion_prepare_maximize(struct madway_view *view){prepare(view,MOTION_MAXIMIZE);}
+
 void madway_motion_start(struct madway_view *view,bool minimizing,bool restoring)
 {
     struct madway_server *server=view->server;
@@ -195,6 +235,10 @@ void madway_motion_start(struct madway_view *view,bool minimizing,bool restoring
     if (!minimizing && !view->scene_tree->node.enabled) {madway_motion_finish(server);return;}
     motion->minimizing=minimizing;motion->restoring=restoring;
     motion->to=minimizing?minimize_target(motion):window_box(view,true);
+    if(motion->dissolve) {
+        motion->incoming=wlr_scene_buffer_create(motion->tree,motion->image->buffer);
+        if(!motion->incoming){madway_motion_finish(server);return;}
+    }
     if (restoring && !motion->continuing) {motion->from=minimize_target(motion);motion->opacity_from=0;}
     motion->reveal=view->scene_tree->node.enabled;
     motion->running=true;motion->started=madway_animation_now();position(motion,0);
@@ -205,15 +249,20 @@ void madway_motion_start(struct madway_view *view,bool minimizing,bool restoring
 
 void madway_motion_open(struct madway_view *view)
 {
-    madway_motion_prepare(view);
+    // New toplevels may come from the launcher, terminal, dock, or another app.
+    // There is no app-id filter; the first valid client buffer starts the reveal.
+    if(!view->server->config.open_animate || view->desktop_overlay)return;
+    struct madway_config *config=&view->server->config;
+    struct wlr_box target=window_box(view,true);
+    struct wlr_box origin=madway_motion_open_geometry(target,view->fullscreen?MADWAY_OPEN_FADE:config->open_style,
+        config->open_scale,config->open_distance);
+    if(!config->open_fade && wlr_box_equal(&origin,&target))return;
+    prepare(view,MOTION_OPENING);
     struct madway_motion *motion=view->server->window_motion;
     if (!motion || motion->view!=view) return;
-    int dx=(int)lround(motion->from.width*.02),dy=(int)lround(motion->from.height*.02);
-    motion->from.x+=dx;motion->from.y+=dy+6;
-    motion->from.width-=2*dx;motion->from.height-=2*dy;
-    motion->opacity_from=0;
+    motion->from=origin;motion->fade_only=wlr_box_equal(&origin,&target);
+    motion->opacity_from=config->open_fade?0:1;
     madway_motion_start(view,false,false);
-    if (view->server->window_motion) view->server->window_motion->restoring=true;
 }
 
 void madway_motion_activate(struct madway_view *view)

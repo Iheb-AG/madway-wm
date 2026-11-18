@@ -75,6 +75,8 @@ class TaskPreview:
         monitor=self.bar['monitor'] if self.bar else display.get_monitor_at_window(parent.get_window())
         bounds=monitor.get_geometry();width=min(254,max(80,bounds.width-12));height=min(178,max(60,bounds.height-12))
         self.window=Gtk.Window();self.window.set_decorated(False);self.window.set_resizable(False)
+        visual=self.window.get_screen().get_rgba_visual()
+        if visual is not None:self.window.set_visual(visual)
         self.window.get_style_context().add_class('task-preview-window')
         Layer.init_for_window(self.window);Layer.set_namespace(self.window,'madway-task-preview')
         Layer.set_monitor(self.window,monitor);Layer.set_layer(self.window,Layer.Layer.OVERLAY)

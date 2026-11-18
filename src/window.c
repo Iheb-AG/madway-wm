@@ -94,7 +94,7 @@ void madway_set_maximized(struct madway_view *view, bool maximized)
         wlr_xdg_toplevel_set_maximized(view->toplevel, maximized);
         return;
     }
-    madway_motion_prepare(view);
+    madway_motion_prepare_maximize(view);
     if (maximized && !view->maximized) save_geometry(view);
     view->maximized = maximized;
     wlr_xdg_toplevel_set_maximized(view->toplevel, maximized);

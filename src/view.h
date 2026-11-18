@@ -20,6 +20,7 @@ struct madway_view
     unsigned workspace, id;
     unsigned preview_serial;
     bool mapped, floating, compact_frame, keep_above, desktop_overlay, minimized;
+    bool opening_pending;
     int frame_hover;
     double tile_weight;
     struct wlr_box tile_geometry;

@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- Refresh the desktop gallery with current Argent Silver, Argent Midnight and
+  Prism Glass sessions, Konsole, Firefox and redesigned Settings. Add selectable
+  theme captures with an original generated background and isolated app profiles.
+
+- Animate all new application toplevels after their first valid scene-buffer commit.
+  Add opening presets and custom motion, duration, easing, scale, distance and fade;
+  add independent maximize/restore presets, duration and easing. Keep legacy opt-outs
+  and minimize timing, preserve transparency and retarget zoom reversals smoothly.
+
+- Animate panel dropdowns and cascades with frame-clock fades and anchored edge
+  reveals, configurable duration and the existing effects switch. Preserve live
+  text/layout, match input regions to the visible menu and cancel cleanly on
+  dismissal/replacement. Flip cascades near screen edges without moving the root.
+
+- Add a digits-only panel timer/stopwatch and compact anchored controls for mode,
+  duration, start/pause/resume and reset. Share live state across monitors, retain
+  it through panel reloads, account for laptop sleep and notify once on expiry.
+  Add a panel visibility switch and remember mode/countdown duration.
+
+- Rebuild Settings around reference-style category icons, history navigation,
+  compact page summaries, grouped row cards and a fixed footer. Preserve
+  searchable categories and draft settings.
+- Add the separate Prism Glass preset: real translucent shell/utility/Settings
+  backgrounds and native frames, while keeping text and controls opaque.
+- Replace exit-time application muting with temporary silent-output routing so
+  closing apps cannot persist an unwanted mute. Restore routes and remove the
+  temporary output on cancellation/teardown; recover abandoned outputs at login.
+- Add output/port selection, a speaker test and explicit application unmute and
+  routing in Settings. Selecting Use output also moves current playback.
+
+- Start an installed Polkit authentication agent in native sessions and stop it
+  with the desktop helper. Include Polkit, UDisks2 and GVfs in Arch dependencies;
+  stop forcing GIO's local backend on launched applications. Document separate
+  administrator-folder and partition-mounting backends.
+
 - Keep only the approved Argent panel/dock outline removal; revert Studio icons,
   utility glyphs, placement and finish. Retire preview activation, retain legacy rollback.
 - Add Windows XP/Luna and Vista/Aero profiles with native Cairo title bars,

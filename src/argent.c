@@ -144,13 +144,21 @@ void madway_argent_title(cairo_t *cr, struct madway_view *view, int width, int h
     cairo_close_path(cr);
     cairo_clip(cr);
     struct madway_config *config=&view->server->config;
-    if(config->custom_colors) {
+    if(config->glass) {
+        const float *color=active?config->active:config->surface;
+        cairo_pattern_t *paint=cairo_pattern_create_linear(0,0,0,height);
+        cairo_pattern_add_color_stop_rgba(paint,0,color[0],color[1],color[2],active?.87:.82);
+        cairo_pattern_add_color_stop_rgba(paint,1,color[0]*.68,color[1]*.68,color[2]*.68,.92);
+        cairo_set_source(cr,paint);cairo_paint(cr);cairo_pattern_destroy(paint);
+    } else if(config->custom_colors) {
         const float *color=active?config->active:config->surface;
         cairo_set_source_rgb(cr,color[0],color[1],color[2]);cairo_paint(cr);
     } else gradient(cr, dark ? (active ? .24 : .19) : (active ? .83 : .92),
             dark ? (active ? .17 : .14) : (active ? .63 : .83), height);
-    cairo_set_source_rgba(cr, 1, 1, 1, .35);
-    cairo_rectangle(cr, 0, 0, width, 1);cairo_fill(cr);
+    if(!config->glass) {
+        cairo_set_source_rgba(cr, 1, 1, 1, .35);
+        cairo_rectangle(cr, 0, 0, width, 1);cairo_fill(cr);
+    }
     double edge_color = dark ? .08 : active ? .4 : .85;
     cairo_set_source_rgb(cr, edge_color, edge_color, edge_color);
     cairo_rectangle(cr, 0, height - 1, width, 1);cairo_fill(cr);

@@ -1,0 +1,41 @@
+/* Prism: real alpha surfaces. Text, icons and controls retain full opacity.
+ * This preset uses compositing transparency, without a background blur pass. */
+* { font-family: sans-serif; }
+window { background: transparent; color: #f3f6fc; }
+.bar, .bar.top, .bar.bottom, .bar.left, .bar.right {
+    background-image: linear-gradient(to bottom, rgba(43,58,79,.87), rgba(19,28,42,.91));
+    border: 0; color: #f3f6fc;
+}
+.bar button, .bar label { color: #f3f6fc; }
+.bar button { background: transparent; border: 0; outline-style: none; box-shadow: none; }
+.bar button:hover, .bar button.selected { background: rgba(130,181,255,.22); }
+.bar button.selected label { color: #ffffff; }
+window#waybar { background: transparent; color: #f3f6fc; }
+window#waybar > box {
+    background-image: linear-gradient(to bottom, rgba(65,82,109,.75), rgba(20,30,46,.88));
+    border: 0; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,.25);
+}
+#taskbar button.active { background: rgba(130,181,255,.2); border-bottom-color: #82b5ff; }
+#taskbar button:hover { background: rgba(130,181,255,.14); }
+.menu, .menu.audio-menu, .session-card, .switcher-surface, .media-card, #outer-box {
+    background-image: linear-gradient(to bottom, rgba(43,56,77,.94), rgba(22,31,47,.96));
+    color: #f3f6fc; border: 0; border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.25);
+}
+.menu label, .session-card label, .switcher-surface label, .media-card label, #text { color: #f3f6fc; }
+.menu button { border: 0; background: transparent; color: #f3f6fc; }
+.menu button:hover, .menu button.selected { background: rgba(130,181,255,.2); }
+.menu.audio-menu .audio-mixer, .menu calendar, .menu calendar.header, .menu calendar.button { background: transparent; color: #f3f6fc; }
+.settings-window { background: rgba(20,29,43,.88); color: #f3f6fc; }
+.settings-window .settings-navigation { background: rgba(29,42,61,.58); border: 0; }
+.settings-window .settings-hero { background: rgba(43,57,78,.82); }
+.settings-window .settings-footer { border: 0; }
+.settings-window entry, .settings-window spinbutton, .settings-window combobox button,
+.session-card button { background: #202d41; color: #f3f6fc; border-color: #4c5e77; }
+.settings-window spinbutton entry, .settings-window spinbutton button { background: transparent; border: 0; }
+.settings-window .settings-source-list row:selected, .settings-window button.settings-primary { background: #315f9c; }
+.settings-window .settings-source-list row:selected label, .settings-window button.settings-primary label { color: #ffffff; }
+.settings-window button.settings-nav-group { background: transparent; border: 0; }
+tooltip { background: #263142; color: #f3f6fc; border: 0; border-radius: 6px; }
+tooltip label { color: #f3f6fc; }
+window.task-preview-window { background: rgba(26,37,55,.94); color: #f3f6fc; border: 0; border-radius: 9px; }

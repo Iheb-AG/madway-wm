@@ -9,32 +9,49 @@ The latest tagged preview is **v0.1.0-alpha.1**. This branch includes the
 [Unreleased changes](CHANGELOG.md), including desktop files, drag-and-drop,
 window previews, animations, laptop power management and screen locking.
 
-![madway running a terminal, Firefox and compact settings](docs/screenshots/workstation.png)
+![Argent Midnight with Konsole, Firefox and madway Settings](docs/screenshots/workstation.png)
+
+| Argent · Silver | Prism · Glass |
+| --- | --- |
+| [![Argent Silver desktop](docs/screenshots/workstation-light.png)](docs/screenshots/workstation-light.png) | [![Prism Glass desktop](docs/screenshots/theme-glass.png)](docs/screenshots/theme-glass.png) |
 
 [Desktop menu](docs/screenshots/desktop-menu.png) ·
 [Audio mixer](docs/screenshots/panel-audio.png) ·
 [Application search](docs/screenshots/launcher.png) ·
 [Window previews](docs/screenshots/switcher.png) ·
 [Compact settings](docs/screenshots/settings.png) ·
+[Glass preset](docs/screenshots/theme-glass.png) ·
+[Window animation settings](docs/screenshots/window-animations.png) ·
 [Desktop files](docs/screenshots/desktop-files.png)
 
 These are real captures from isolated test sessions with temporary homes and
 fixture content. See [screenshot details and regeneration](docs/screenshots/README.md).
-Windows XP (Luna-inspired) and Windows Vista (Aero-inspired) profiles are available
-in Settings → Appearance, alongside Argent Silver/Midnight. The Studio experiment
-has been retired; the approved panel/dock outline removal remains.
-
-Konsole is the default terminal; the workstation capture uses Kitty as another
-native Wayland client.
+Choose **Argent · Silver**, **Argent · Midnight** or **Prism · Glass** in
+Settings → Appearance. Glass adds translucent panel, dock, utility surfaces,
+Settings and native title bars, with opaque text and controls. Windows XP
+(Luna-inspired) and Windows Vista (Aero-inspired) profiles are also available.
+The captures use Konsole, the default terminal, and a generated test background;
+public installs include no personal wallpaper or sounds.
 
 ## What works
 
 - **Customization:** a single searchable settings sidebar with all categories visible,
-  sectioned forms, flat buttons and square check inputs, and separate sound preferences.
+  colored category icons, back/forward navigation, grouped row cards and compact
+  switches, and separate sound preferences.
   Appearance controls cover themes/colors, typography, icons, wallpaper, animations,
   panel widgets, dock contents and desktop icons.
   The dock editor adds/removes/reorders installed applications. Display settings
   include draggable monitor previews with edge snapping and scale/rotation.
+- **Panel timer:** a digits-only timer/stopwatch readout with a compact click-open
+  popup for mode, duration, start/pause/resume and reset. Clocks survive panel
+  reloads and keep accurate elapsed time across laptop sleep.
+- **Panel menu motion:** eased fade/edge reveals for dropdowns and cascading
+  submenus, paced by the output frame clock. Menus retain sharp text and stable
+  control positions; the effect duration and master switch are in Animations.
+- **Application motion:** opening effects for new windows and dialogs from any
+  launch path, with Soft zoom, Fade, Rise, Slide and Spring presets. Maximize and
+  restore have separate zoom/spring/dissolve/instant profiles. Timing, easing,
+  starting size, travel and opening fade can be customized in Animations.
 - **Window management:** floating by default, master/stack tiling, nine independent
   workspaces per monitor, fullscreen, maximize, minimize, keep-above and resizable tiles.
   Alt+Tab shows image previews, including covered and minimized windows.
@@ -108,6 +125,10 @@ uses optional `brightnessctl`, falling back to logind through `busctl`. Personal
 sounds use `pw-play` or `paplay`. Connectivity settings use optional NetworkManager
 (`nmcli`, `nm-connection-editor`) and BlueZ/Blueman tools; see
 [system settings dependencies](docs/SYSTEM_SETTINGS.md#connectivity).
+Native sessions start an installed Polkit authentication agent for graphical
+password prompts. Partition mounting uses UDisks2; GTK file managers use GVfs,
+and Dolphin's administrator mode needs `kio-admin`. See
+[file access and partition mounting](docs/SYSTEM_SETTINGS.md#file-access-and-partition-mounting).
 
 Check the installed tools, then start a nested desktop:
 
@@ -280,7 +301,11 @@ stream to show. In a nested session, audio and brightness controls affect the
 host hardware. The confirmed power-off action shuts down the whole computer. Confirmed exit
 actions request applications to close and temporarily quiet their playback while
 the session sound plays. An application that refuses to close cancels the exit;
-previous stream mute state is restored on cancellation or a failed power request.
+previous playback routes are restored on cancellation or a failed power request.
+Exit isolation uses a disposable silent output, preserving application mute flags
+so closed apps do not reopen silently. Settings → Audio & brightness provides
+output/port selection, a speaker test, per-app unmute and playback routing. Choosing
+**Use output** moves existing playback as well as changing the default for new apps.
 
 | Guide | Details |
 | --- | --- |
@@ -312,8 +337,8 @@ and `Scene commits recovered` messages. See [installation diagnostics](docs/INST
 for black-screen startup and fullscreen playback troubleshooting.
 
 madway currently supports native Wayland clients. Xwayland, arbitrary keybinding
-editing, clipboard persistence and a complete portal/polkit
-setup remain future work. Very constrained tile sizes and GPU-specific behavior
+editing, clipboard persistence and complete portal integration
+remain future work. Very constrained tile sizes and GPU-specific behavior
 need further compatibility testing.
 
 ## Validation

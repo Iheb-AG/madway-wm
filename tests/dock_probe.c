@@ -117,6 +117,7 @@ static int tick(void *unused)
     struct madway_view *view=NULL,*entry;
     wl_list_for_each(entry,&server->views,link)
         if(entry->mapped && entry->toplevel->title && !strcmp(entry->toplevel->title,"dock-fixture"))view=entry;
+    if(getenv("MADWAY_MOTION_TEST"))view=server->focused_view;
     int other_enabled=0;
     wl_list_for_each(layer,&server->layers,link) {
         if(!strcmp(layer->surface->namespace,"madway-dock")) {
@@ -125,9 +126,10 @@ static int tick(void *unused)
         }
         if(layer->mapped && !strcmp(layer->surface->namespace,"madway-menu"))menu=layer;
     }
-    if(command && command!=last_command && dock) {
+    if(command && command!=last_command && (dock || getenv("MADWAY_MOTION_TEST"))) {
         last_command=command;
-        struct wlr_box box;wlr_output_layout_get_box(server->output_layout,dock->surface->output,&box);
+        struct wlr_box box;wlr_output_layout_get_box(server->output_layout,
+            dock?dock->surface->output:server->active_output?server->active_output->output:wlr_output_layout_get_center_output(server->output_layout),&box);
         if(command==1 || command==7) {
             uint32_t anchor=dock->surface->current.anchor;
             double x=dock->scene_layer->tree->node.x+dock->surface->surface->current.width/2.0;
@@ -205,7 +207,8 @@ static int tick(void *unused)
     }
     snprintf(path,sizeof(path),"%s/probe.tmp",root);file=fopen(path,"w");
     if(file) {
-        int motion_width=0,motion_height=0,motion_pixels=0,incoming=0;
+        int motion_width=0,motion_height=0,motion_pixels=0,incoming=0,motion_x=0,motion_y=0;
+        float motion_opacity=1;
         if (server->window_motion) {
             struct wlr_scene_node *node=wl_container_of(server->above_windows->node.link.next,node,link);
             if (node->type==WLR_SCENE_NODE_TREE) {
@@ -216,6 +219,7 @@ static int tick(void *unused)
                         struct wlr_scene_buffer *image=wlr_scene_buffer_from_node(child);
                         motion_width=image->dst_width;motion_height=image->dst_height;
                         motion_pixels=image->buffer?image->buffer->width:0;
+                        motion_x=image->node.x;motion_y=image->node.y;motion_opacity=image->opacity;
                         incoming=wl_list_length(&tree->children)>1;
                     }
                 }
@@ -241,6 +245,12 @@ static int tick(void *unused)
                 if (!strcmp(layer->surface->namespace,"madway-desktop") &&
                     wl_resource_get_client(surface->surface->resource)==wl_resource_get_client(layer->surface->resource)) desktop_menu_above=true;
         }
+        fprintf(file,"\"motion_x\":%d,\"motion_y\":%d,\"motion_opacity\":%.6f,\"view_x\":%d,\"view_y\":%d,\"view_width\":%d,\"view_height\":%d,\"view_maximized\":%s,\"view_fullscreen\":%s,\"open_style\":%d,\"open_curve\":%d,\"open_ms\":%d,\"open_enabled\":%s,\"maximize_style\":%d,\"maximize_curve\":%d,\"maximize_ms\":%d,",
+            motion_x,motion_y,motion_opacity,view?view->scene_tree->node.x:0,view?view->scene_tree->node.y:0,
+            view?view->toplevel->base->geometry.width:0,view?view->toplevel->base->geometry.height:0,
+            view && view->maximized?"true":"false",view && view->fullscreen?"true":"false",
+            server->config.open_style,server->config.open_curve,server->config.open_animation_ms,server->config.open_animate?"true":"false",
+            server->config.maximize_style,server->config.maximize_curve,server->config.maximize_animation_ms);
         fprintf(file,"\"motion\":%s,\"motion_width\":%d,\"motion_height\":%d,\"motion_pixels\":%d,\"incoming\":%d,\"view_enabled\":%s,\"drag\":%s,\"desktop_menu_above\":%s,\"desktop_layers\":%d,\"outputs\":[",
                 server->window_motion?"true":"false",motion_width,motion_height,motion_pixels,incoming,view && view->scene_tree->node.enabled?"true":"false",server->seat->drag?"true":"false",desktop_menu_above?"true":"false",desktop_layers);
         bool first=true;

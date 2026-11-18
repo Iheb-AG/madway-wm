@@ -33,10 +33,15 @@ def check(stage=0):
                 button.clicked()
                 assert stack.get_visible_child_name() in api['SETTINGS_GROUPS'][group]
                 assert {browser.page_for_row(row) for row in browser.list.get_children() if row.get_child_visible() and row.page is not None}==set(api['SETTINGS_PAGES'])
+            stack.set_visible_child_name('Windows');stack.set_visible_child_name('Wallpaper')
+            browser.back.clicked();assert stack.get_visible_child_name()=='Windows'
+            browser.forward.clicked();assert stack.get_visible_child_name()=='Wallpaper'
+            assert all(len(row.get_child().get_children())==2 for row in browser.rows.values()),'Missing sidebar icon/label'
             browser.search.set_text('shader');browser.search_changed();assert stack.get_visible_child_name()=='Session effects'
             browser.search.set_text('does-not-exist');browser.search_changed();assert 'No settings' in browser.description.get_text()
             browser.search.set_text('');browser.search_changed();stack.set_visible_child_name('Windows')
             control('Windows','Master width (%)').set_value(63)
+            control('Animations','Panel menu animation (ms)').set_value(300)
             browser.group_buttons['Appearance'].clicked();stack.set_visible_child_name('Session effects')
             assert control('Windows','Master width (%)').get_value_as_int()==63,'Navigation lost unsaved changes'
             mode=control('Session effects','Exit animation');mode.set_active_id('none');assert not control('Session effects','Exit').get_sensitive()
@@ -53,10 +58,15 @@ def check(stage=0):
             shot('settings-input');stack.set_visible_child_name('Sounds')
         elif stage==4:
             shot('settings-sounds')
+            latest=configparser.ConfigParser(interpolation=None);latest.read(api['CONFIG'])
+            latest['timer']={'mode':'stopwatch','duration':'17'}
+            with api['CONFIG'].open('w') as output:latest.write(output)
             apply=next(w for w in children(window) if isinstance(w,Gtk.Button) and w.get_label()=='Apply');apply.clicked()
             cfg=configparser.ConfigParser(interpolation=None);cfg.read(api['CONFIG'])
             assert cfg.get('session_effects','mode')=='shader' and cfg.get('session_effects','shader')=='iris' and cfg.getint('session_effects','duration_ms')==900
             assert cfg.getint('windows','master_percent')==63
+            assert cfg.getint('motion','menu_ms')==300
+            assert cfg.get('timer','mode')=='stopwatch' and cfg.getint('timer','duration')==17,'Apply overwrote newer popup preferences'
             stack.set_visible_child_name('Displays')
             refresh=control('Displays','Monitor list');refresh.clicked()
             grid=next(w for w in children(stack.get_child_by_name('Displays')) if isinstance(w,Gtk.Grid))
@@ -65,9 +75,15 @@ def check(stage=0):
             pages=list(api['SETTINGS_PAGES']);index=stage-5
             if index>=len(pages):window.destroy();return False
             page=pages[index];stack.set_visible_child_name(page)
+            attempts=0
             def geometry(page=page):
+                nonlocal attempts
                 try:
                     scroll=stack.get_child_by_name(page);grid=next(w for w in children(scroll) if isinstance(w,Gtk.Grid));width=grid.get_allocated_width()
+                    attempts+=1
+                    pending=not scroll.get_mapped() or any(w.get_visible() and w.get_allocation().x<0 for w in grid.get_children())
+                    if pending and attempts<20:return True
+                    assert not pending,(page,'Page failed to allocate')
                     rows={}
                     for child in grid.get_children():
                         if not child.get_visible():continue
@@ -75,10 +91,11 @@ def check(stage=0):
                         row=grid.child_get_property(child,'top-attach');rows.setdefault(row,[]).append(box)
                     for boxes in rows.values():
                         if len(boxes)==2:
-                            a,b=sorted(boxes,key=lambda box:box.x);assert a.x+a.width<=b.x,(page,a,b)
-                except BaseException as error:errors.append(error);window.destroy()
+                            a,b=sorted(boxes,key=lambda box:box.x);assert a.x+a.width<=b.x,(page,(a.x,a.y,a.width,a.height),(b.x,b.y,b.width,b.height))
+                except BaseException as error:shot('settings-failure-'+page);errors.append(error);window.destroy()
+                else:GLib.timeout_add(55,lambda:check(stage+1))
                 return False
-            GLib.timeout_add(45,geometry)
+            GLib.timeout_add(25,geometry);return False
         GLib.timeout_add(100,lambda:check(stage+1));return False
     except BaseException as error:errors.append(error);window.destroy();return False
 

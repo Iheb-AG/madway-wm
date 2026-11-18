@@ -37,4 +37,7 @@ with tempfile.TemporaryDirectory(prefix='madway-extensions-') as tmp:
             server.terminate()
             try:server.wait(timeout=5)
             except subprocess.TimeoutExpired:server.kill();server.wait()
+            if os.environ.get('MADWAY_TEST_ARTIFACTS'):
+                artifacts=Path(os.environ['MADWAY_TEST_ARTIFACTS']);artifacts.mkdir(parents=True,exist_ok=True)
+                (artifacts/'server.log').write_text((root/'server.log').read_text())
         assert server.returncode==0,(root/'server.log').read_text()

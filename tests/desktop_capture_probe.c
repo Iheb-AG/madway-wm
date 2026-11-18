@@ -18,7 +18,7 @@ static struct wlr_keyboard keyboard;
 static struct wlr_pointer pointer;
 static struct wl_event_source *timer;
 static struct wl_listener destroy;
-static bool menu_opened, audio_opened, switcher_opened;
+static bool menu_opened, switcher_opened, launcher_typed;
 static const struct wlr_keyboard_impl keyboard_impl={.name="capture-keyboard"};
 static const struct wlr_pointer_impl pointer_impl={.name="capture-pointer"};
 static int arrange(void *unused)
@@ -29,9 +29,9 @@ static int arrange(void *unused)
     {
         if(!view->mapped)continue;
         const char *id=view->toplevel->app_id,*title=view->toplevel->title;
-        int x=28,y=54,w=700,h=420;
-        if(id && !strcmp(id,"org.madway.Settings")){x=28;y=510;w=640;h=440;}
-        else if((id && strstr(id,"firefox")) || (title && strstr(title,"Firefox"))){x=760;y=54;w=800;h=650;}
+        int x=40,y=70,w=840,h=370;
+        if(id && !strcmp(id,"org.madway.Settings")){x=40;y=492;w=840;h=440;}
+        else if((id && strstr(id,"firefox")) || (title && strstr(title,"Firefox"))){x=920;y=70;w=640;h=700;}
         wlr_scene_node_set_position(&view->scene_tree->node,x,y);
         if(view->toplevel->base->geometry.width!=w || view->toplevel->base->geometry.height!=h)
             wlr_xdg_toplevel_set_size(view->toplevel,w,h);
@@ -50,18 +50,14 @@ static int arrange(void *unused)
             wl_signal_emit_mutable(&pointer.events.frame,NULL);
         }
     }
-    command=getenv("MADWAY_CAPTURE_AUDIO");
-    if(!audio_opened && command && access(command,F_OK)==0)
-    {
-        audio_opened=true;
-        struct wlr_pointer_motion_absolute_event motion={.pointer=&pointer,.time_msec=200,.x=1452.0/1600,.y=9.0/1000};
-        wl_signal_emit_mutable(&pointer.events.motion_absolute,&motion);
-        wl_signal_emit_mutable(&pointer.events.frame,NULL);
-        for(int pressed=1;pressed>=0;--pressed)
-        {
-            struct wlr_pointer_button_event button={.pointer=&pointer,.time_msec=200,.button=BTN_LEFT,
-                .state=pressed?WL_POINTER_BUTTON_STATE_PRESSED:WL_POINTER_BUTTON_STATE_RELEASED};
-            wlr_pointer_notify_button(&pointer,&button);wl_signal_emit_mutable(&pointer.events.frame,NULL);
+    command=getenv("MADWAY_CAPTURE_QUERY");
+    if(!launcher_typed && command && access(command,F_OK)==0) {
+        launcher_typed=true;
+        const uint32_t keys[]={KEY_M,KEY_O,KEY_Z};
+        for(size_t i=0;i<sizeof(keys)/sizeof(keys[0]);++i) {
+            struct wlr_keyboard_key_event event={.time_msec=250,.keycode=keys[i],.state=WL_KEYBOARD_KEY_STATE_PRESSED,.update_state=true};
+            wlr_keyboard_notify_key(&keyboard,&event);
+            event.state=WL_KEYBOARD_KEY_STATE_RELEASED;wlr_keyboard_notify_key(&keyboard,&event);
         }
     }
     command=getenv("MADWAY_CAPTURE_SWITCHER");

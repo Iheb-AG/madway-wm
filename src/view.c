@@ -124,7 +124,10 @@ static void handle_view_commit(struct wl_listener *listener, void *data)
             view->resize_anchor_pending = false;
     }
     madway_frame_update(view);
-    madway_motion_commit(view);
+    if(view->mapped && view->opening_pending) {
+        view->opening_pending=false;
+        madway_motion_open(view);
+    } else madway_motion_commit(view);
 }
 
 static void handle_view_map(struct wl_listener *listener, void *data)
@@ -190,8 +193,9 @@ static void handle_view_map(struct wl_listener *listener, void *data)
     madway_workspace_arrange(view->server);
     if (madway_view_visible(view) && !view->desktop_overlay) madway_focus_view(view->server, view);
     madway_rebase_cursor(view->server);
-    if (g_strcmp0(view->toplevel->app_id,"org.madway.Settings")==0)
-        madway_motion_open(view);
+    // Map is emitted before the scene surface has attached this commit's
+    // buffer. Start from the following commit callback, before its first frame.
+    view->opening_pending=true;
     wlr_log(WLR_INFO, "Window mapped: %s", view->toplevel->title != NULL
             ? view->toplevel->title : "(untitled)");
 }
@@ -202,6 +206,7 @@ static void handle_view_unmap(struct wl_listener *listener, void *data)
     struct madway_view *view = wl_container_of(listener, view, unmap);
     madway_close_begin(view);
     madway_motion_finish(view->server);
+    view->opening_pending=false;
     view->mapped = false;
     madway_preview_remove(view);
     madway_taskbar_remove(view);

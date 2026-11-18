@@ -70,6 +70,8 @@ add_executable(madway
     src/transition.h
     src/motion.c
     src/motion.h
+    src/motion_profile.c
+    src/motion_profile.h
     src/animation.c
     src/animation.h
     src/effects.c
@@ -112,6 +114,10 @@ target_include_directories(madway PRIVATE
 install(TARGETS madway RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS scripts/madway-session scripts/madway-shell scripts/madway-panel scripts/madway-script scripts/madway-terminal scripts/madway-screenshot scripts/madway-desktop DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES scripts/madway_power.py scripts/madway_lock.py scripts/madway_wallpaper.py scripts/madway_files.py scripts/madway_sound.py scripts/madway_apps.py scripts/madway_settings.py scripts/madway_spotlight.py scripts/madway_media.py scripts/madway_playback.py scripts/madway_widgets.py scripts/madway_system.py scripts/madway_capture.py scripts/madway_appearance.py scripts/madway_exit.py scripts/madway_exit_ui.py scripts/madway_gl.py DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES scripts/madway_auth.py DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES scripts/madway_timer.py scripts/madway_timer_ui.py DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES scripts/madway_menu.py DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES scripts/madway_motion_presets.py DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY share/madway DESTINATION ${CMAKE_INSTALL_DATADIR})
 
 # Plasma Login/SDDM's session shell does not evaluate quotes in Exec paths.

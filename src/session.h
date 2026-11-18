@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <sys/types.h>
+#include "motion_profile.h"
 struct madway_server;
 
 struct madway_config {
@@ -11,7 +12,7 @@ struct madway_config {
     int repeat_rate, repeat_delay;
     int dock_animation_ms;
     bool dock_autohide, dock_animate;
-    bool default_floating, use_super, focus_follows_mouse, argent, argent_dark;
+    bool default_floating, use_super, focus_follows_mouse, argent, argent_dark, glass;
     bool lid_auto;
     bool tap, tap_drag, drag_lock, dwt, touchpad_natural, mouse_natural, left_handed, middle_emulation;
     double touchpad_speed, mouse_speed;
@@ -23,6 +24,11 @@ struct madway_config {
     int workspace_animation_ms;
     bool window_animate;
     int window_animation_ms;
+    bool open_animate,open_fade;
+    int open_animation_ms,open_scale,open_distance,maximize_animation_ms;
+    enum madway_open_style open_style;
+    enum madway_maximize_style maximize_style;
+    enum madway_motion_curve open_curve,maximize_curve;
     bool close_animate;
     int close_animation_ms;
     bool effects_animate;

@@ -170,11 +170,87 @@ PAGE_DESCRIPTIONS={
 }
 
 
+PAGE_ICONS={
+    'Appearance':('preferences-desktop-theme-symbolic','violet'),
+    'Wallpaper':('preferences-desktop-wallpaper-symbolic','cyan'),
+    'Animations':('media-playback-start-symbolic','violet'),
+    'Session effects':('weather-clear-night-symbolic','violet'),
+    'Panel':('view-list-symbolic','slate'), 'Dock':('view-grid-symbolic','slate'),
+    'Desktop':('user-desktop-symbolic','blue'), 'Launcher':('system-search-symbolic','slate'),
+    'Windows':('focus-windows-symbolic','blue'), 'Displays':('video-display-symbolic','blue'),
+    'Input':('input-keyboard-symbolic','slate'), 'Keyboard':('input-keyboard-symbolic','slate'),
+    'Mouse & touchpad':('input-mouse-symbolic','slate'),
+    'Microphone':('audio-input-microphone-symbolic','orange'), 'Camera':('camera-video-symbolic','green'),
+    'Network':('network-wireless-symbolic','blue'), 'Bluetooth':('bluetooth-symbolic','blue'),
+    'Notifications':('preferences-system-notifications-symbolic','red'),
+    'Audio & brightness':('audio-volume-high-symbolic','red'), 'Sounds':('audio-speakers-symbolic','red'),
+    'Power':('battery-good-symbolic','green'), 'Default applications':('application-x-executable-symbolic','blue'),
+    'Date & time':('preferences-system-time-symbolic','blue'), 'Session':('system-log-out-symbolic','slate'),
+    'About':('preferences-system-symbolic','slate'),
+}
+
+
+def page_icon(name,size=18):
+    icon,tint=PAGE_ICONS.get(name,('preferences-system-symbolic','slate'))
+    image=Gtk.Image.new_from_icon_name(icon,Gtk.IconSize.MENU);image.set_pixel_size(size)
+    image.get_style_context().add_class('settings-page-icon')
+    image.get_style_context().add_class('settings-icon-'+tint)
+    return image
+
+
+class SettingsForm(Gtk.Grid):
+    """One accessible grid with cards grouped by section, retaining label links."""
+    def __init__(self,colors,glass,**kwargs):
+        super().__init__(**kwargs);self.colors=colors;self.glass=glass
+        self.get_style_context().add_class('settings-form')
+
+    @staticmethod
+    def rounded(cr,x,y,w,h,r=9):
+        r=min(r,w/2,h/2);k=.55228475
+        cr.new_sub_path();cr.move_to(x+r,y);cr.line_to(x+w-r,y)
+        cr.curve_to(x+w-r+k*r,y,x+w,y+r-k*r,x+w,y+r);cr.line_to(x+w,y+h-r)
+        cr.curve_to(x+w,y+h-r+k*r,x+w-r+k*r,y+h,x+w-r,y+h);cr.line_to(x+r,y+h)
+        cr.curve_to(x+r-k*r,y+h,x,y+h-r+k*r,x,y+h-r);cr.line_to(x,y+r)
+        cr.curve_to(x,y+r-k*r,x+r-k*r,y,x+r,y);cr.close_path()
+
+    def do_draw(self,cr):
+        rows={};headings=set()
+        for child in self.get_children():
+            if not child.get_visible() or not child.get_child_visible():continue
+            row=self.child_get_property(child,'top-attach');box=child.get_allocation()
+            rows.setdefault(row,[]).append(box)
+            if child.get_style_context().has_class('settings-section'):headings.add(row)
+        groups=[];current=[]
+        for row in sorted(rows):
+            if row in headings:
+                if current:groups.append(current);current=[]
+            else:current.append(row)
+        if current:groups.append(current)
+        colors=self.colors();rgba=Gdk.RGBA();rgba.parse(colors['surface'])
+        alpha=.9 if self.glass() else 1
+        width=self.get_allocated_width()
+        for group in groups:
+            top=min(b.y for b in rows[group[0]])
+            bottom=max(b.y+b.height for b in rows[group[-1]])
+            self.rounded(cr,0,top,width,max(1,bottom-top))
+            cr.set_source_rgba(rgba.red,rgba.green,rgba.blue,alpha);cr.fill()
+            # Short, quiet separators keep the groups legible without boxed fields.
+            for previous,following in zip(group,group[1:]):
+                y=(max(b.y+b.height for b in rows[previous])+min(b.y for b in rows[following]))/2
+                border=Gdk.RGBA();border.parse(colors['border'])
+                cr.set_source_rgba(border.red,border.green,border.blue,.18)
+                cr.set_line_width(1);cr.move_to(12,y+.5);cr.line_to(width-12,y+.5);cr.stroke()
+        return Gtk.Grid.do_draw(self,cr)
+
+
 class SettingsBrowser:
     """All categories stay visible; searchable pages share a stable heading."""
-    def __init__(self,stack,sidebar,groups,search,tabs,heading,description):
+    def __init__(self,stack,sidebar,groups,search,tabs,heading,description,hero=None,back=None,forward=None):
         self.stack=stack;self.sidebar=sidebar;self.groups=groups;self.search=search
         self.heading=heading;self.description=description;self.group=None;self.syncing=False
+        self.hero=hero;self.back=back;self.forward=forward;self.history=[];self.cursor=-1;self.revisiting=False
+        if back:back.connect('clicked',lambda *args:self.go(-1))
+        if forward:forward.connect('clicked',lambda *args:self.go(1))
         self.titles={stack.child_get_property(child,'title'):stack.child_get_property(child,'name') for child in stack.get_children()}
         self.pages={stack.child_get_property(child,'name'):child for child in stack.get_children()}
         self.group_buttons={};self.last={};self.rows={};self.headers={}
@@ -199,7 +275,9 @@ class SettingsBrowser:
             for name in pages:
                 row=Gtk.ListBoxRow();row.page=name;row.group=group
                 label=Gtk.Label(label=stack.child_get_property(self.pages[name],'title'),xalign=0)
-                label.set_ellipsize(3);label.set_max_width_chars(24);row.add(label)
+                label.set_ellipsize(3);label.set_max_width_chars(24)
+                line=Gtk.Box(spacing=8);line.pack_start(page_icon(name),False,False,0)
+                line.pack_start(label,True,True,0);row.add(line)
                 self.list.add(row);self.rows[name]=row
         self.list.set_filter_func(self.filter_row)
         self.list.connect('row-selected',self.select_row)
@@ -229,9 +307,22 @@ class SettingsBrowser:
         self.search.set_text('');self.group=group
         self.stack.set_visible_child_name(self.last.get(group,self.groups[group][0]));self.update()
 
+    def go(self,delta):
+        target=self.cursor+delta
+        if not 0<=target<len(self.history):return
+        self.revisiting=True;self.cursor=target;self.search.set_text('')
+        self.stack.set_visible_child_name(self.history[target]);self.update();self.revisiting=False
+
     def update(self,*args):
         page=self.stack.get_visible_child_name()
         if page is None:return
+        if not self.revisiting and (self.cursor<0 or self.history[self.cursor]!=page):
+            self.history=self.history[:self.cursor+1]+[page];self.cursor=len(self.history)-1
+        if self.back:self.back.set_sensitive(self.cursor>0)
+        if self.forward:self.forward.set_sensitive(self.cursor<len(self.history)-1)
+        if self.hero:
+            for child in self.hero.get_children():child.destroy()
+            self.hero.add(page_icon(page,24));self.hero.show_all()
         self.group=next((group for group,pages in self.groups.items() if page in pages),next(iter(self.groups)))
         self.last[self.group]=page;self.syncing=True
         for group,button in self.group_buttons.items():

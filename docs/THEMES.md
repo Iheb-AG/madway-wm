@@ -76,3 +76,27 @@ The Studio finish experiment was not approved and is retired. A stored Studio
 flag is ignored on load. If you used its trial and want the previous color profile
 back too, `madway-shell appearance-preview rollback` can restore its old checkpoint;
 new previews cannot be activated.
+
+## Prism glass preset
+
+[Glass screenshot](screenshots/theme-glass.png)
+
+Choose **Prism · Glass** (`prism-glass`) in Settings → Appearance → Theme profile
+and Apply. It is a separate opt-in preset; switching back to Argent, Black or
+another profile restores that preset's materials. Personal wallpaper, audio,
+input preferences and dock contents are retained. The optional coordinated layout
+uses a compact top panel and bottom dock.
+
+Prism uses real alpha compositing on the panel, dock, menus, launcher, switcher,
+media indicators, session cards, previews, Settings and compositor title bars.
+Settings has an RGBA client surface; background shapes remain visible underneath.
+Text/icons stay opaque, control surfaces are solid, and grouped form cards use
+a stronger dark tint for legibility over bright wallpaper. There is no whole-window
+opacity reduction, compositor background blur, or global change to third-party
+application content. Transparency uses the existing wlroots scene composition,
+so it does not require an extra blur pass or continuous idle rendering.
+
+`share/madway/prism-glass.css`, `themes.ini` and the glass branch of `src/argent.c`
+define the preset. The generated background in the screenshot is a private test
+fixture, not an installed wallpaper. Tests verify CSS parsing, RGBA pixels over
+different backdrops, opaque heading text and real headless captures.

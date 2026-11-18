@@ -2,8 +2,12 @@
 <meta charset="utf-8">
 <title>madway — workstation notes</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#050505;color:#c8c8c8;font:13px/1.45 monospace}main{padding:22px}small{color:#d0d0d0;letter-spacing:2px}h1{font-size:28px;font-weight:500;margin:10px 0 4px}p{color:#999999;margin:0 0 26px}section{border:1px solid #282828;background:#0c0c0c;margin-top:14px;padding:12px}h2{margin:0 0 12px;font-size:13px;color:#bbbbbb}dl{display:grid;grid-template-columns:1fr 1.8fr;gap:8px;margin:0}dt{color:#999999}dd{margin:0}code{color:#d0d0d0}.line{border-top:1px solid #282828;margin:20px 0}footer{color:#777777;font-size:12px;margin-top:22px}
+:root{color-scheme:dark;--bg:#202124;--surface:#2b2d31;--text:#ededed;--muted:#adb3bd;--line:#474950;--accent:#99b7ff}
+:root[data-theme=argent]{color-scheme:light;--bg:#ededed;--surface:#fdfdfd;--text:#181b22;--muted:#586272;--line:#d6d9df;--accent:#315ec9}
+:root[data-theme=prism-glass]{--bg:#151d29;--surface:#263142;--text:#f3f6fc;--muted:#b9c5d6;--line:#465567;--accent:#a9cdff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,sans-serif}main{padding:32px}small{color:var(--accent);letter-spacing:2px;font-size:11px}h1{font-size:30px;font-weight:600;letter-spacing:-1px;margin:12px 0 8px}p{color:var(--muted);margin:0 0 28px}section{border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-top:16px;padding:18px}h2{margin:0 0 14px;font-size:11px;letter-spacing:1px;color:var(--muted)}dl{display:grid;grid-template-columns:1fr 1.6fr;gap:10px;margin:0}dt{color:var(--muted)}dd{margin:0}code{color:var(--accent);font-size:12px}.line{border-top:1px solid var(--line);margin:18px 0}footer{color:var(--muted);font-size:11px;margin-top:22px}
 </style>
+<script>document.documentElement.dataset.theme=new URLSearchParams(location.search).get('theme')||'argent-dark';</script>
 <main>
 <small>MADWAY / WORKSTATION</small>
 <h1>A little more room to work.</h1>
@@ -16,8 +20,8 @@
 <dt>Desktop menu</dt><dd>Right-click empty space</dd>
 </dl></section>
 <section><h2>WORKSPACE NOTES</h2>
-Native Wayland applications, floating and tiled windows, nine workspaces,
-per-monitor profiles, notifications, and a minimal top bar.
+Native Wayland applications, floating and tiled windows, nine independent
+workspaces per monitor, image previews, and a compact panel and dock.
 <div class="line"></div>
 This page is served locally for the project screenshots.
 </section>

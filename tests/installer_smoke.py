@@ -22,6 +22,10 @@ with tempfile.TemporaryDirectory(prefix='madway-installer-test-') as tmp:
     entry=stage/'usr/share/wayland-sessions/madway.desktop'
     data_dir=stage/'usr/local/share/madway'
     assert (binaries/'madway_power.py').is_file()
+    assert (binaries/'madway_auth.py').is_file()
+    assert (binaries/'madway_timer.py').is_file() and (binaries/'madway_timer_ui.py').is_file()
+    assert (binaries/'madway_menu.py').is_file()
+    assert (binaries/'madway_motion_presets.py').is_file()
     assert (binaries/'madway_lock.py').is_file()
     assert (binaries/'madway_wallpaper.py').is_file()
     assert (binaries/'madway_files.py').is_file()
@@ -35,6 +39,7 @@ with tempfile.TemporaryDirectory(prefix='madway-installer-test-') as tmp:
         assert (data_dir/stylesheet).is_file()
     assert (data_dir/'settings.css').is_file()
     for theme in ('windows-xp.css','windows-vista.css'):assert (data_dir/theme).is_file()
+    assert (data_dir/'prism-glass.css').is_file()
     assert (data_dir/'licenses/GPUImage2-BSD-3-Clause.txt').is_file()
     assert (data_dir/'argent-common.css').is_file() and (data_dir/'argent-panel.css').is_file()
     local_wallpaper=repo/'share/madway/wallpapers/Abstract Blue.png'

@@ -60,7 +60,7 @@ CachyOS and KDE/Plasma are not required. Konsole is the current terminal choice
 and brings KDE libraries; it does not need a running Plasma desktop. Audio uses
 PipeWire/Pulse-compatible tools. Native sleep/lid handling and brightness fallback
 use systemd-logind; locking uses swaylock with working PAM configuration.
-GTK/Qt application styling, portals, polkit agents and distribution packaging
+GTK/Qt application styling, portals and distribution packaging
 still need their own setup; this is not a complete replacement for every service
 that a larger desktop starts.
 

@@ -41,6 +41,9 @@ a later login. The native launcher explicitly selects the DRM/libinput backend,
 clears inherited nested-display variables, and uses the login user's D-Bus bus
 when available. The desktop helper exports the Wayland activation environment
 for native-session D-Bus services.
+It also starts an installed Polkit agent for password prompts; `--deps` includes
+KDE's agent, UDisks2 and GVfs. See [file access](SYSTEM_SETTINGS.md#file-access-and-partition-mounting)
+for administrator backends and partition mounting.
 
 A native session needs an active local login with device access through logind
 or a correctly configured libseat backend. The installer does not change device
@@ -110,7 +113,7 @@ are under Panel. Screen edge supports top, bottom, left and right. It is hidden 
 images are opt-in. Your existing `~/.config/madway/settings.ini` is preserved.
 
 Screen locking uses swaylock; install it with `--deps`. This preview has no
-Xwayland or a full desktop portal/polkit-agent setup. Connectivity settings
+Xwayland or complete desktop portal integration. Connectivity settings
 use optional NetworkManager/BlueZ tools; see [system settings](SYSTEM_SETTINGS.md). It supports native Wayland applications. The system
 power-off action shuts down the whole computer, following a confirmation. The
 panel's dedicated power icon provides session controls directly; restart and

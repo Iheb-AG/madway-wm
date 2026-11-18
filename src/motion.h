@@ -8,6 +8,7 @@ void madway_motion_frame(struct madway_output *output,double now);
 bool madway_motion_active(struct madway_output *output);
 void madway_motion_commit(struct madway_view *view);
 void madway_motion_prepare(struct madway_view *view);
+void madway_motion_prepare_maximize(struct madway_view *view);
 void madway_motion_start(struct madway_view *view,bool minimizing,bool restoring);
 void madway_motion_activate(struct madway_view *view);
 void madway_motion_open(struct madway_view *view);

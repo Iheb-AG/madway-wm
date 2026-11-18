@@ -21,6 +21,19 @@ def run(argv):
 state=module.microphone_snapshot(run)
 assert [row['index'] for row in state['sources']]==[1,3]
 assert state['default']=='laptop-mic' and state['streams'][0]['index']==7
+def output_run(argv):
+    calls.append(argv)
+    if argv[-1]=='info':return json.dumps(dict(default_sink_name='speakers'))
+    if argv[-1]=='sinks':return json.dumps([dict(index=9,name='speakers'),dict(index=10,name='madway_exit_test')])
+    if argv[-1]=='sink-inputs':return json.dumps([dict(index=71,sink=9,mute=True,properties={'application.name':'Brave'})])
+    return ''
+outputs=module.playback_snapshot(output_run)
+assert [row['name'] for row in outputs['sinks']]==['speakers'] and outputs['streams'][0]['mute']
+module.playback_control('default',9,run=output_run)
+assert calls[-1]==['pactl','move-sink-input','71','9']
+module.playback_control('mute',71,False,output_run);assert calls[-1]==['pactl','set-sink-input-mute','71','0']
+module.playback_control('route',71,12,output_run);assert calls[-1]==['pactl','move-sink-input','71','12']
+module.playback_control('port',9,'analog-output-speaker',output_run);assert calls[-1]==['pactl','set-sink-port','9','analog-output-speaker']
 for operation,value,expected in [
     ('default',None,['set-default-source','1']),('mute',True,['set-source-mute','1','1']),
     ('volume',180,['set-source-volume','1','100%']),('port','internal-mic',['set-source-port','1','internal-mic']),

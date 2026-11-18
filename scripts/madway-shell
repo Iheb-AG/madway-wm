@@ -31,20 +31,23 @@ SETTINGS_GROUPS={
 }
 SETTINGS_PAGES=tuple(page for pages in SETTINGS_GROUPS.values() for page in pages)
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "madway" / "settings.ini"
+MOTION_PRESETS=runpy.run_path(str(Path(__file__).with_name('madway_motion_presets.py')))
 DEFAULTS = {
     "appearance": {"theme": "black", "shell_finish":"classic", "title_height": "14", "tile_gap": "1",'font':'','text_size':'0','title_font_size':'0','icon_theme':'','custom_colors':'false'},
     'colors':{key:'' for key in ('background','surface','text','muted','border','accent','active')},
     'launcher':{'width':'560','lines':'7','icons':'true','icon_size':'28','autocomplete':'true','completion_opacity':'38'},
-    "windows": {"default_mode": "floating", "master_percent": "50", "animate":"true", "animation_ms":"360",'close_animate':'true','close_ms':'240'},
+    "windows": {"default_mode": "floating", "master_percent": "50", "animate":"true", "animation_ms":"360",'close_animate':'true','close_ms':'240',
+        'open_animate':'true','open_preset':'soft','maximize_preset':'smooth',**MOTION_PRESETS['OPENING']['soft'][1],**MOTION_PRESETS['MAXIMIZE']['smooth'][1]},
     "session_effects":{"mode":"fade","shader":"crt","duration_ms":"600","opening":"true","opening_ms":"700"},
-    "motion":{"version":"2","effects":"true","wallpaper_fade_ms":"650","launcher_ms":"240","media_ms":"180"},
+    "motion":{"version":"2","effects":"true","wallpaper_fade_ms":"650","launcher_ms":"240","menu_ms":"240","media_ms":"180"},
     "desktop":{"icons":"true","folder":"","icon_size":"40",'cell_width':'92','spacing':'8','margin':'12','text_size':'12','single_click':'false','labels':'true'},
     "input": {"focus_follows_mouse": "false", "modifier": "alt", "repeat_rate": "25", "repeat_delay": "600"},
     "keyboard":{"layout":"","variant":"","options":""},
     "mouse":{"speed":"0.0","natural_scroll":"false","left_handed":"false","middle_emulation":"false","accel_profile":"default"},
     "touchpad":{"tap":"true","tap_drag":"true","drag_lock":"false","disable_while_typing":"true","natural_scroll":"false","speed":"0.0","click_method":"default","workspace_swipe":"true","swipe_invert":"false","swipe_threshold":"120"},
     "workspaces":{"animate":"true","animation_ms":"420"},
-    "panel": {"position": "top", "enabled": "true", "height": "18", "metrics": "true", "clock": "true", "label": "@user", "tasks":"icons",'padding':'10','spacing':'0','text_size':'0','show_title':'true','show_workspaces':'true','show_tasks':'true','show_audio':'true','show_session':'true','previews':'true','clock_format':''},
+    "panel": {"position": "top", "enabled": "true", "height": "18", "metrics": "true", "clock": "true", "label": "@user", "tasks":"icons",'padding':'10','spacing':'0','text_size':'0','show_title':'true','show_workspaces':'true','show_tasks':'true','show_audio':'true','show_session':'true','show_timer':'true','previews':'true','clock_format':''},
+    'timer':{'mode':'timer','duration':'300'},
     "demoscene": {"scene": "classic", "assets": "", "sound": "false", "click_through": "true"},
     "power": {"show_battery": "true", "notifications": "true", "low_percent": "20", "critical_percent": "10", "lid_action": "suspend"},
     "locking": {"before_sleep":"true"},
@@ -71,6 +74,7 @@ def settings():
     if stored.getint('motion','version',fallback=0)<2:
         for section,legacy,current in [('windows','180','360'),('workspaces','220','420'),('dock','180','240')]:
             if config.get(section,'animation_ms')==legacy:config[section]['animation_ms']=current
+    MOTION_PRESETS['normalize'](config,stored)
     return config
 
 
@@ -116,7 +120,7 @@ def panel_style(config):
 
 def desktop_preset(config, name):
     """Apply geometry and background together, preserving unrelated preferences."""
-    if name not in {'argent','argent-dark','windows-xp','windows-vista'}:raise ValueError('Unknown desktop preset')
+    if name not in {'argent','argent-dark','prism-glass','windows-xp','windows-vista'}:raise ValueError('Unknown desktop preset')
     config['appearance'].update(theme=name, shell_finish='classic', title_height='22')
     config['panel'].update(enabled='true', position='bottom' if name.startswith('windows-') else 'top', height='24' if name.startswith('windows-') else '22', metrics='false')
     config['dock'].update(enabled='true',position='bottom')
@@ -162,8 +166,12 @@ def theme_style(style, config=None):
         else:
             result = re.sub(r'^font=.*$', 'font=Inter Medium 10', result, flags=re.M)
             result = re.sub(r'^border-radius=.*$', 'border-radius=6', result, flags=re.M)
+    if name=='prism-glass' and '{' not in style:
+        result=re.sub(r'^background-color=.*$','background-color=#1a2537f0',result,flags=re.M)
+        result=re.sub(r'^border-size=.*$','border-size=0',result,flags=re.M)
     if '{' in style:
         if name in {'windows-xp','windows-vista'}:result+='\n'+(SHARE/(name+'.css')).read_text()
+        if name=='prism-glass':result+='\n'+(SHARE/'prism-glass.css').read_text()
         # The stock finish also loses its white bevel; preview styling never
         # changes this border policy or affects non-Argent palettes.
         if name in {'argent','argent-dark'}:
@@ -198,7 +206,9 @@ def overlay_style(filename,config=None):
     values=palette(config);values['font']=json.dumps(config.get('appearance','font')) if config.get('appearance','font').strip() else 'Inter, sans-serif' if name.startswith('argent') else 'monospace'
     if name=='argent':values['muted']='#6f737a'
     values['selection_text']=contrast_text(values['active'])
-    return re.sub(r'@([a-z_]+)@',lambda match:values[match[1]],(SHARE/filename).read_text())+font_style(config)
+    style=re.sub(r'@([a-z_]+)@',lambda match:values[match[1]],(SHARE/filename).read_text())
+    if name=='prism-glass':style+='\n'+(SHARE/'prism-glass.css').read_text()
+    return style+font_style(config)
 
 
 def validate_script_updates(updates):
@@ -484,6 +494,7 @@ class Desktop:
         self.media=runpy.run_path(str(Path(__file__).with_name('madway_media.py')))['MediaController'](self,
             dict(run=run,volume=volume,microphone=microphone,brightness=brightness,set_brightness=set_brightness))
         self.native=os.environ.get('MADWAY_NATIVE')=='1'
+        self.timer=runpy.run_path(str(Path(__file__).with_name('madway_timer.py')))['TimerController'](self)
         self.playback=runpy.run_path(str(Path(__file__).with_name('madway_playback.py')))['PlaybackGuard'](self)
         self.session_exit=runpy.run_path(str(Path(__file__).with_name('madway_exit.py')))['SessionExitController'](self)
         GLib.timeout_add(150,self.poll_pins)
@@ -494,12 +505,12 @@ class Desktop:
         except Exception as error:
             print('madway: session power: '+str(error),file=sys.stderr);return True
 
-    def spawn(self, key, arguments):
+    def spawn(self, key, arguments, env=None):
         existing = self.children.get(key)
         if existing is not None and existing.poll() is None:
             return existing
         try:
-            process = subprocess.Popen(arguments)
+            process = subprocess.Popen(arguments, env=env)
         except FileNotFoundError:
             print(f"madway: optional desktop program missing: {arguments[0]}", file=sys.stderr)
             return None
@@ -847,7 +858,7 @@ class Desktop:
                             self.compositor('output '+output['name']);break
                 except (OSError,ValueError,KeyError,TypeError):pass
             page = message.get("page", "Desktop")
-            if page not in {"Desktop", "Settings", "Window", "Workspaces", "Audio", "Status", "Clock", "Session", "Demoscenes", "Battery", "Screenshot", "Application"}:
+            if page not in {"Desktop", "Settings", "Window", "Workspaces", "Audio", "Status", "Clock", "Session", "Demoscenes", "Battery", "Screenshot", "Application", "Timer"}:
                 raise RuntimeError("Unknown panel menu")
             self.terminate("desktop-menu")
             edge = message.get("edge", "point")
@@ -855,6 +866,12 @@ class Desktop:
             self.spawn("desktop-menu", [sys.executable, str(Path(__file__).with_name("madway-panel")), "menu",
                 "--x", str(int(message.get("x", 0))), "--y", str(int(message.get("y", 0))),
                 "--edge", edge, "--page", page, "--detail="+str(message.get("detail", ""))[:256]])
+        elif name == 'timer-control':
+            preferences=self.timer.control(message)
+            config=settings()
+            if any(config.get('timer',key)!=value for key,value in preferences.items()):
+                config['timer'].update(preferences);write_settings(config)
+            self.config['timer'].update(preferences)
         elif name == "power-refresh":
             self.poll_power()
         elif name == "overlay-start":
@@ -1037,13 +1054,14 @@ class Desktop:
     def serve(self):
         # User scripts placed here become available in the run launcher.
         os.environ["PATH"] = str(Path.home() / ".local" / "bin") + ":" + os.environ.get("PATH", "")
-        os.environ.setdefault("GIO_USE_VFS", "local")
         try:
             if os.environ.get("MADWAY_NATIVE") == "1" and shutil.which("dbus-update-activation-environment"):
                 try:
                     run(["dbus-update-activation-environment", "--systemd", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"])
                 except (RuntimeError, subprocess.TimeoutExpired) as error:
                     print(f"madway: session activation environment: {error}", file=sys.stderr)
+            runpy.run_path(str(Path(__file__).with_name('madway_auth.py')))['start_agent'](self)
+            self.playback.recover()
             self.apply()
             self.poll_power()
             login_event=runpy.run_path(str(Path(__file__).with_name('madway_sound.py')))['login_event']
@@ -1058,6 +1076,8 @@ class Desktop:
             # Completed exit sound is already synchronized with the visual.
             exit_audio_done=self.exit_sound_played
             self.session_exit.close()
+            self.timer.close()
+            self.playback.close()
             self.media.close()
             self.power.close()
             self.locker.close()
@@ -1102,13 +1122,15 @@ def settings_window(initial_page="Windows"):
         module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
     editors=vars(sys.modules['madway_settings'])
     window = Gtk.Window(title="madway — Settings")
+    visual=window.get_screen().get_rgba_visual()
+    if visual is not None:window.set_visual(visual)
     # This owned client requests no CSD; madway supplies its compact 14px frame.
     window.set_decorated(False)
     display=Gdk.Display.get_default()
     monitor=display.get_monitor_at_point(0,0) if display else None
     bounds=monitor.get_geometry() if monitor else None
-    window.set_default_size(min(760,max(540,bounds.width-48)) if bounds else 760,
-                            min(540,max(360,bounds.height-80)) if bounds else 540)
+    window.set_default_size(min(840,max(600,bounds.width-48)) if bounds else 840,
+                            min(620,max(420,bounds.height-80)) if bounds else 620)
     window.get_style_context().add_class('settings-window')
     window.connect("destroy", Gtk.main_quit)
     provider = Gtk.CssProvider()
@@ -1119,30 +1141,41 @@ def settings_window(initial_page="Windows"):
         layout=(SHARE/'settings.css').read_text()
         for name,value in colors.items():layout=layout.replace('@'+name+'@',value)
         layout=layout.replace('@selection_text@',contrast_text(colors['active']))
-        return (theme_style(settings_css,config)+layout+font_style(config)).encode()
+        material='\n'+(SHARE/'prism-glass.css').read_text() if config.get('appearance','theme')=='prism-glass' else ''
+        return (theme_style(settings_css,config)+layout+material+font_style(config)).encode()
     provider.load_from_data(settings_styles())
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=0)
     window.add(root)
     content=Gtk.Box(spacing=0);root.pack_start(content,True,True,0)
-    navigation=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8,margin=8)
-    navigation.set_size_request(162,-1);navigation.get_style_context().add_class('settings-navigation')
+    navigation=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
+    navigation.set_size_request(190,-1);navigation.get_style_context().add_class('settings-navigation')
     content.pack_start(navigation,False,False,0)
-    search=Gtk.SearchEntry(placeholder_text='Find settings…');search.set_width_chars(18);navigation.pack_start(search,False,False,0)
+    search=Gtk.SearchEntry(placeholder_text='Search');search.set_width_chars(15);navigation.pack_start(search,False,False,0)
     sidebar=Gtk.ScrolledWindow();sidebar.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC);sidebar.set_overlay_scrolling(False)
     navigation.pack_start(sidebar,True,True,0)
     stack=Gtk.Stack();stack.set_hexpand(True);tabs=None
-    body=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4,margin=10)
+    body=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10,margin=14)
+    body.get_style_context().add_class('settings-body')
     content.pack_start(body,True,True,0)
-    heading=Gtk.Label(xalign=0);heading.get_style_context().add_class('settings-heading');body.pack_start(heading,False,False,0)
-    description=Gtk.Label(xalign=0,wrap=True,max_width_chars=65);description.get_style_context().add_class('settings-description');body.pack_start(description,False,False,0)
+    toolbar=Gtk.Box(spacing=0);toolbar.get_style_context().add_class('settings-history');body.pack_start(toolbar,False,False,0)
+    back=Gtk.Button.new_from_icon_name('go-previous-symbolic',Gtk.IconSize.MENU);back.set_tooltip_text('Previous settings page')
+    forward=Gtk.Button.new_from_icon_name('go-next-symbolic',Gtk.IconSize.MENU);forward.set_tooltip_text('Next settings page')
+    toolbar.pack_start(back,False,False,0);toolbar.pack_start(forward,False,False,0)
+    hero=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5,margin_top=2,margin_bottom=2)
+    hero.get_style_context().add_class('settings-hero');body.pack_start(hero,False,False,0)
+    hero_icon=Gtk.Box();hero_icon.set_halign(Gtk.Align.CENTER);hero.pack_start(hero_icon,False,False,0)
+    heading=Gtk.Label();heading.get_style_context().add_class('settings-heading');hero.pack_start(heading,False,False,0)
+    description=Gtk.Label(wrap=True,max_width_chars=60,justify=Gtk.Justification.CENTER)
+    description.get_style_context().add_class('settings-description');hero.pack_start(description,False,False,0)
     body.pack_start(stack,True,True,0)
     status=Gtk.Label(xalign=0,wrap=True,max_width_chars=80);status.get_style_context().add_class('settings-status');status.set_no_show_all(True)
     root.pack_start(status,False,False,0)
     status.connect('notify::label',lambda widget,*args:widget.set_visible(bool(widget.get_text())))
 
     def category(name):
-        grid=Gtk.Grid(column_spacing=12,row_spacing=7,margin_top=8,margin_bottom=8)
+        grid=editors['SettingsForm'](lambda:palette(config),lambda:config.get('appearance','theme')=='prism-glass',
+            column_spacing=12,row_spacing=0,margin_top=2,margin_bottom=8)
         grid.set_valign(Gtk.Align.START);grid.set_hexpand(True);grid.next_row=0
         scroll=Gtk.ScrolledWindow();scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False);scroll.add(grid)
@@ -1151,17 +1184,21 @@ def settings_window(initial_page="Windows"):
 
     def section(grid,title):
         label=Gtk.Label(label=title,xalign=0);label.get_style_context().add_class('settings-section')
+        label.set_margin_top(12);label.set_margin_bottom(4)
         grid.attach(label,0,grid.next_row,2,1);grid.next_row+=1
 
     def field(grid,label,widget):
         row=getattr(grid,'next_row',len(grid.get_children())//2);grid.next_row=row+1
         if not label and isinstance(widget,(Gtk.Box,Gtk.Expander)):
+            widget.set_margin_start(12);widget.set_margin_end(12);widget.set_margin_top(6);widget.set_margin_bottom(6)
             widget.set_hexpand(True);grid.attach(widget,0,row,2,1);return widget
         caption=Gtk.Label(label=label,xalign=0,wrap=True,max_width_chars=23)
         caption.set_width_chars(17);caption.set_valign(Gtk.Align.CENTER)
+        caption.set_size_request(-1,28);caption.set_margin_start(12);caption.set_margin_top(4);caption.set_margin_bottom(4)
         caption.set_mnemonic_widget(widget)
         grid.attach(caption,0,row,1,1)
         widget.set_hexpand(True);widget.set_valign(Gtk.Align.CENTER)
+        widget.set_margin_end(12);widget.set_margin_top(4);widget.set_margin_bottom(4)
         if isinstance(widget,Gtk.Scale):widget.set_value_pos(Gtk.PositionType.RIGHT)
         if isinstance(widget,Gtk.Label):widget.set_max_width_chars(36);widget.set_line_wrap(True)
         grid.attach(widget,1,row,1,1)
@@ -1183,9 +1220,9 @@ def settings_window(initial_page="Windows"):
         return field(grid, label, widget)
 
     def switch(grid, label, section, key):
-        widget = field(grid, label, Gtk.CheckButton())
+        widget = field(grid, label, Gtk.Switch())
         widget.set_active(config.getboolean(section, key))
-        widget.set_halign(Gtk.Align.END);widget.set_size_request(22,22)
+        widget.set_halign(Gtk.Align.END)
         return widget
 
     def file_field(grid, label, value, directory=False):
@@ -1299,8 +1336,8 @@ def settings_window(initial_page="Windows"):
     apply_layout=Gtk.Button(label='Use this profile layout')
     apply_layout.set_tooltip_text('Argent: top panel. XP/Vista: bottom panel. Preserves your input and audio settings.')
     apply_layout.connect('clicked',lambda w:(action('desktop-preset',preset=theme_choice.get_active_id()),window.destroy()))
-    apply_layout.set_sensitive(theme_choice.get_active_id() in {'argent','argent-dark','windows-xp','windows-vista'})
-    theme_choice.connect('changed',lambda w:apply_layout.set_sensitive(w.get_active_id() in {'argent','argent-dark','windows-xp','windows-vista'}))
+    apply_layout.set_sensitive(theme_choice.get_active_id() in {'argent','argent-dark','prism-glass','windows-xp','windows-vista'})
+    theme_choice.connect('changed',lambda w:apply_layout.set_sensitive(w.get_active_id() in {'argent','argent-dark','prism-glass','windows-xp','windows-vista'}))
     field(appearance,'Coordinated layout',apply_layout)
     section(appearance,'Typography & icons')
     shell_font=field(appearance,'UI font family',Gtk.Entry(text=config.get('appearance','font')))
@@ -1332,13 +1369,47 @@ def settings_window(initial_page="Windows"):
     workspace_duration=spin(animations,'Workspace animation (ms)','workspaces','animation_ms',80,500)
     section(animations,'Window actions')
     window_animate=switch(animations,'Animate maximize / minimize','windows','animate')
-    window_duration=spin(animations,'Window animation (ms)','windows','animation_ms',80,500)
+    window_duration=spin(animations,'Minimize / restore (ms)','windows','animation_ms',80,500)
+    section(animations,'Application opening')
+    open_enabled=switch(animations,'Animate application opening','windows','open_animate')
+    opening_presets=MOTION_PRESETS['OPENING'];maximize_presets=MOTION_PRESETS['MAXIMIZE']
+    open_preset=combo(animations,'Opening preset',[(key,value[0]) for key,value in opening_presets.items()]+[('custom','Custom')],config.get('windows','open_preset'))
+    open_controls={
+        'open_style':combo(animations,'Opening motion',[('zoom','Zoom'),('fade','Fade'),('rise','Rise'),('slide','Slide from left')],config.get('windows','open_style')),
+        'open_ms':spin(animations,'Opening duration (ms)','windows','open_ms',80,1000),
+        'open_curve':combo(animations,'Opening easing',MOTION_PRESETS['CURVES'],config.get('windows','open_curve')),
+        'open_scale':spin(animations,'Opening start size (%)','windows','open_scale',50,100),
+        'open_distance':spin(animations,'Opening travel (px)','windows','open_distance',0,128),
+        'open_fade':switch(animations,'Fade in opening windows','windows','open_fade'),
+    }
+    open_enabled.set_tooltip_text('Applies to new application windows from any launcher, terminal, dock or another app, including dialogs. It starts when the first client frame is available.')
+    def open_sensitivity():
+        enabled=open_enabled.get_active();style=open_controls['open_style'].get_active_id()
+        open_preset.set_sensitive(enabled)
+        for widget in open_controls.values():widget.set_sensitive(enabled)
+        open_controls['open_scale'].set_sensitive(enabled and style=='zoom')
+        open_controls['open_distance'].set_sensitive(enabled and style!='fade')
+    MOTION_PRESETS['bind'](open_preset,opening_presets,open_controls,open_enabled,open_sensitivity)
+    section(animations,'Maximize & restore')
+    maximize_preset=combo(animations,'Maximize preset',[(key,value[0]) for key,value in maximize_presets.items()]+[('custom','Custom')],config.get('windows','maximize_preset'))
+    maximize_controls={
+        'maximize_style':combo(animations,'Maximize motion',[('zoom','Zoom between sizes'),('dissolve','Crossfade between sizes'),('none','Instant')],config.get('windows','maximize_style')),
+        'maximize_ms':spin(animations,'Maximize duration (ms)','windows','maximize_ms',80,1000),
+        'maximize_curve':combo(animations,'Maximize easing',MOTION_PRESETS['CURVES'],config.get('windows','maximize_curve')),
+    }
+    def maximize_sensitivity():
+        enabled=window_animate.get_active();moving=maximize_controls['maximize_style'].get_active_id()!='none'
+        maximize_preset.set_sensitive(enabled)
+        for key,widget in maximize_controls.items():widget.set_sensitive(enabled and (moving or key=='maximize_style'))
+    MOTION_PRESETS['bind'](maximize_preset,maximize_presets,maximize_controls,window_animate,maximize_sensitivity)
+    section(animations,'Window closing')
     close_animate=switch(animations,'Animate closing windows','windows','close_animate')
     close_duration=spin(animations,'Close animation (ms)','windows','close_ms',80,500)
     section(animations,'Desktop surfaces')
     effects=switch(animations,'Desktop effects','motion','effects')
     wallpaper_fade=spin(animations,'Wallpaper fade (ms)','motion','wallpaper_fade_ms',100,2000)
     launcher_duration=spin(animations,'Launcher animation (ms)','motion','launcher_ms',80,600)
+    menu_duration=spin(animations,'Panel menu animation (ms)','motion','menu_ms',80,600)
     media_duration=spin(animations,'Media indicator animation (ms)','motion','media_ms',80,600)
     exit_page=category('Session effects')
     section(exit_page,'Logout, restart & shutdown')
@@ -1548,6 +1619,10 @@ def settings_window(initial_page="Windows"):
         if stack.get_visible_child_name()!='Camera':camera.stop()
     stack.connect('notify::visible-child-name',capture_page_changed)
     audio = category("Audio & brightness")
+    playback=capture['PlaybackPane'](runtime_directory)
+    section(audio,'Output device & application routing');field(audio,'',playback)
+    stack.connect('notify::visible-child-name',lambda *args:playback.stop() if stack.get_visible_child_name()!='Audio & brightness' else None)
+    section(audio,'Volume & brightness')
     def hardware_slider(label, getter, name):
         slider = field(audio, label, Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0 if name == "set-volume" else 1, 100, 1))
         try:
@@ -1647,7 +1722,7 @@ def settings_window(initial_page="Windows"):
     clock_format=field(panel_page,'Clock format',Gtk.Entry(text=config.get('panel','clock_format')))
     clock_format.set_placeholder_text('Theme default; e.g. %a %H:%M or %I:%M %p')
     panel_flags={key:switch(panel_page,label,'panel',key) for label,key in [('Active window title','show_title'),
-        ('Workspace number','show_workspaces'),('Application tasks','show_tasks'),('Volume button','show_audio'),('Session button','show_session'),('Window preview tooltips','previews')]}
+        ('Workspace number','show_workspaces'),('Application tasks','show_tasks'),('Volume button','show_audio'),('Timer / stopwatch','show_timer'),('Session button','show_session'),('Window preview tooltips','previews')]}
     dock_page=category('Dock')
     dock_enabled=switch(dock_page,'Application dock (Waybar)','dock','enabled')
     app_api=runpy.run_path(str(Path(__file__).with_name('madway_apps.py')))
@@ -1725,9 +1800,13 @@ def settings_window(initial_page="Windows"):
             config['touchpad']['swipe_threshold']=str(swipe_threshold.get_value_as_int())
             config['workspaces'].update(animate=str(workspace_animate.get_active()).lower(),animation_ms=str(workspace_duration.get_value_as_int()))
             config['windows'].update(animate=str(window_animate.get_active()).lower(),animation_ms=str(window_duration.get_value_as_int()))
+            config['windows'].update(open_animate=str(open_enabled.get_active()).lower(),open_preset=open_preset.get_active_id(),maximize_preset=maximize_preset.get_active_id())
+            for controls in (open_controls,maximize_controls):
+                for key,widget in controls.items():
+                    config['windows'][key]=widget.get_active_id() if hasattr(widget,'get_active_id') else str(widget.get_value_as_int()) if hasattr(widget,'get_value_as_int') else str(widget.get_active()).lower()
             config['windows'].update(close_animate=str(close_animate.get_active()).lower(),close_ms=str(close_duration.get_value_as_int()))
             config['motion'].update(effects=str(effects.get_active()).lower(),wallpaper_fade_ms=str(wallpaper_fade.get_value_as_int()),
-                launcher_ms=str(launcher_duration.get_value_as_int()),media_ms=str(media_duration.get_value_as_int()))
+                launcher_ms=str(launcher_duration.get_value_as_int()),menu_ms=str(menu_duration.get_value_as_int()),media_ms=str(media_duration.get_value_as_int()))
             config["panel"].update(position=panel_position.get_active_id(), enabled=str(panel_enabled.get_active()).lower(), height=str(panel_height.get_value_as_int()),
                 metrics=str(panel_metrics.get_active()).lower(), clock=str(panel_clock.get_active()).lower(), label=panel_name.get_text().strip() or '@user',tasks=panel_tasks.get_active_id())
             config['dock'].update(enabled=str(dock_enabled.get_active()).lower(),position=dock_position.get_active_id(),icons_only=str(dock_icons.get_active()).lower(),icon_size=str(dock_size.get_value_as_int()),tray=str(dock_tray.get_active()).lower())
@@ -1740,6 +1819,9 @@ def settings_window(initial_page="Windows"):
             config["notifications"].update(enabled=str(notifications.get_active()).lower(), indicators=str(indicators.get_active()).lower(),
                 timeout=str(timeout.get_value_as_int()), width=str(notify_width.get_value_as_int()), anchor=anchor.get_active_id())
             config["sounds"].update(enabled=str(sounds.get_active()).lower(), volume=str(sound_volume.get_value() / 100), **paths)
+            # The compact timer popup may change its preferences while this
+            # settings window has unsaved edits. Preserve those newer values.
+            config['timer'].update(dict(settings().items('timer')))
             CONFIG.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", dir=CONFIG.parent, delete=False) as temporary:
                 config.write(temporary);temporary_path = Path(temporary.name)
@@ -1771,7 +1853,7 @@ def settings_window(initial_page="Windows"):
     close = Gtk.Button(label="Close");close.connect("clicked", lambda button: window.destroy())
     close.set_size_request(80,-1);buttons.pack_end(close,False,False,0)
     for index,name in enumerate(SETTINGS_PAGES):stack.child_set_property(stack.get_child_by_name(name),'position',index)
-    browser=editors['SettingsBrowser'](stack,sidebar,SETTINGS_GROUPS,search,tabs,heading,description)
+    browser=editors['SettingsBrowser'](stack,sidebar,SETTINGS_GROUPS,search,tabs,heading,description,hero_icon,back,forward)
     window.settings_browser=browser
     stack.set_visible_child_name(initial_page)
     page_channel = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -1829,6 +1911,9 @@ def main():
     elif arguments.command == "doctor":
         print(json.dumps({"programs": {name: shutil.which(name) for name in
             ["mako", "wofi", "swaybg", "swaylock", "konsole", "waybar", "grim", "slurp", "wl-copy", "wpctl", "pactl", "brightnessctl", "busctl", "pw-play", "paplay"]},
+            "authentication_agent": runpy.run_path(str(Path(__file__).with_name('madway_auth.py')))['agent_path'](),
+            "file_access": {"gio_backend": os.environ.get('GIO_USE_VFS', 'auto'),
+                "udisksctl": shutil.which('udisksctl')},
             "backlight": [path.name for path in Path("/sys/class/backlight").glob("*")],
             "battery": battery_state(),
             "settings": str(CONFIG)}, indent=2))

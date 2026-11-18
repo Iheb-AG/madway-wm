@@ -8,6 +8,9 @@ from pathlib import Path
 import runpy
 import threading
 import time
+import importlib.util
+import sys
+import cairo
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -15,6 +18,7 @@ gi.require_version('GtkLayerShell', '0.1')
 from gi.repository import Gtk, Gdk, Gio, GLib, GtkLayerShell as Layer
 gi.require_version('GdkPixbuf','2.0')
 from gi.repository import GdkPixbuf
+read_state=runpy.run_path(str(Path(__file__).with_name('madway_timer.py')))['read_state']
 
 api = runpy.run_path(str(Path(__file__).resolve().with_name('madway-shell')))
 widgets = runpy.run_path(str(Path(__file__).resolve().with_name('madway_widgets.py')))
@@ -23,11 +27,12 @@ action = api['action']
 settings = api['settings']
 runtime_directory = api['runtime_directory']
 PAGES = api['SETTINGS_PAGES']
-MENU_PAGES = ('Desktop', 'Settings', 'Window', 'Workspaces', 'Audio', 'Status', 'Clock', 'Session', 'Demoscenes', 'Battery', 'Screenshot','Application')
+MENU_PAGES = ('Desktop', 'Settings', 'Window', 'Workspaces', 'Audio', 'Status', 'Clock', 'Session', 'Demoscenes', 'Battery', 'Screenshot','Application','Timer')
 CSS = b'''
 * { font-family: monospace; font-size: 10px; border-radius: 0; }
 window { background: #000000; color: #c8c8c8; }
 window.menu-popup, window.menu-popup decoration { background: transparent; padding: 0; margin: 0; border: 0; box-shadow: none; }
+.menu-motion { background: transparent; border: 0; padding: 0; margin: 0; }
 button { min-width: 0; min-height: 0; padding: 0 4px; margin: 0; border: 0; background: transparent; color: #c8c8c8; box-shadow: none; }
 button:hover, button:focus, button.selected { background: #202020; color: #ffffff; }
 button.brand { color: #eeeeee; }
@@ -85,7 +90,7 @@ def layer_window(namespace, monitor, layer, keyboard):
 class TopBar:
     def __init__(self):
         self.config = settings()
-        self.argent = self.config.get('appearance', 'theme') in {'argent','argent-dark'}
+        self.argent = self.config.get('appearance', 'theme') in {'argent','argent-dark','prism-glass'}
         self.display = Gdk.Display.get_default()
         self.bars = []
         self.last_cpu = None
@@ -191,6 +196,8 @@ class TopBar:
                 icon.set_pixel_size(18);audio.set_image(icon)
             battery = button('', 'Battery', tooltip='Battery and charging status')
             battery.set_no_show_all(True)
+            timer=button('', 'Timer', tooltip='Timer / stopwatch')
+            timer.get_style_context().add_class('timer-readout');timer.set_no_show_all(True)
             clock = button('', 'Clock')
             clock.set_no_show_all(True)
             session = button('', 'Session', tooltip='Session · Lock, sleep, log out, restart or shut down')
@@ -199,7 +206,7 @@ class TopBar:
             session.set_image(session_icon);session.set_always_show_image(True)
             session.set_no_show_all(True)
             self.bars.append(dict(window=window, title=title, workspace=workspace, metrics=metrics,
-                audio=audio, battery=battery, clock=clock, monitor=monitor, session=session, vertical=vertical, position=position, arrow=arrow,
+                audio=audio, battery=battery, timer=timer, clock=clock, monitor=monitor, session=session, vertical=vertical, position=position, arrow=arrow,
                 minimized=minimized, minimized_box=minimized_box, minimized_signature=None, empty_space=spacer,
                 buttons=[widget for widget in box.get_children() if isinstance(widget, Gtk.Button)]))
             window.show_all()
@@ -226,6 +233,7 @@ class TopBar:
         except (OSError, ValueError):
             state = {}
         power = api['power_snapshot']()
+        timer=read_state(runtime_directory()/'timer.json').view()
         for bar in self.bars:
             bounds = bar['monitor'].get_geometry()
             vertical = bar['vertical']
@@ -282,6 +290,9 @@ class TopBar:
             bar['session'].set_visible(self.config.getboolean('panel','show_session'))
             bar['metrics'].set_visible(width >= 1000 and self.config.getboolean('panel', 'metrics'))
             bar['clock'].set_visible(self.config.getboolean('panel', 'clock'))
+            bar['timer'].set_visible(self.config.getboolean('panel','show_timer'))
+            bar['timer'].set_label(timer['label']);bar['timer'].get_child().set_angle(90 if vertical else 0)
+            bar['timer'].set_tooltip_text(('Timer' if timer['mode']=='timer' else 'Stopwatch')+' · '+timer['phase']+' · Click to configure')
             title = (output_state.get('app_id') or output_state.get('title') or 'Desktop') if self.argent else output_state.get('title') or 'Desktop'
             if self.argent:title = title.removeprefix('org.').split('.')[-1]
             bar['title'].set_label('W' if vertical else (title+' '+bar['arrow']).strip())
@@ -508,7 +519,12 @@ class AudioMixer:
 
 class DesktopMenu:
     def __init__(self, x, y, page='Desktop', detail='', edge='point'):
-        self.edge = edge
+        self.edge = edge;self.closed=False;self.submenu_motion=None;self.submenu_left=False;self.visible_input=cairo.Region()
+        config=settings();self.animate=config.getboolean('motion','effects');self.menu_ms=config.getint('motion','menu_ms')
+        if 'madway_menu' not in sys.modules:
+            spec=importlib.util.spec_from_file_location('madway_menu',Path(__file__).with_name('madway_menu.py'))
+            module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+        self.Motion=sys.modules['madway_menu'].MenuMotion
         display = Gdk.Display.get_default()
         monitor = display.get_monitor(0)
         for index in range(display.get_n_monitors()):
@@ -526,7 +542,8 @@ class DesktopMenu:
         Layer.set_margin(self.window, Layer.Edge.LEFT, min(max(0, int(x-rect.x)), max(0, rect.width-204)))
         Layer.set_margin(self.window, Layer.Edge.TOP, min(max(0, int(y-rect.y)), max(0, rect.height-240)))
         self.container = Gtk.Box(spacing=0)
-        self.window.add(self.container)
+        self.motion=self.Motion(edge,self.menu_ms,self.animate,self.update_input)
+        self.motion.add(self.container);self.window.add(self.motion)
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.box.get_style_context().add_class('menu')
         self.box.set_size_request(200, -1)
@@ -549,17 +566,34 @@ class DesktopMenu:
         self.show_page(page)
         self.window.show_all()
 
+    def update_input(self):
+        if self.closed or not self.window.get_realized() or not hasattr(self,'box'):return
+        def region(widget,clip=None):
+            x,y,w,h=clip or (0,0,widget.get_allocated_width(),widget.get_allocated_height())
+            origin=widget.translate_coordinates(self.window,int(x),int(y))
+            return cairo.Region(cairo.RectangleInt(origin[0],origin[1],max(0,int(w)),max(0,int(h)))) if origin else cairo.Region()
+        visible=region(self.box)
+        if self.submenu_motion:visible.union(region(self.submenu_motion,self.submenu_motion.clip_rect()))
+        visible.intersect(region(self.motion,self.motion.clip_rect()))
+        self.visible_input=visible
+        self.window.get_window().input_shape_combine_region(visible,0,0)
+
     def keep_on_output(self, widget, allocation):
         for edge, origin, limit, size in ((Layer.Edge.LEFT, self.origin_x, self.available_width, allocation.width),
                                           (Layer.Edge.TOP, self.origin_y, self.available_height, allocation.height)):
             if (edge == Layer.Edge.LEFT and self.edge == 'right') or (edge == Layer.Edge.TOP and self.edge == 'bottom'):
                 origin -= size
+            elif edge==Layer.Edge.LEFT and self.submenu_left and self.submenu_motion:
+                origin-=self.submenu_motion.get_allocated_width()
             margin = max(0, min(origin, max(0, limit-size)))
             if Layer.get_margin(self.window, edge) != margin:Layer.set_margin(self.window, edge, margin)
 
     def cleanup(self, *args):
         if self.hover_source:GLib.source_remove(self.hover_source)
         self.hover_source = 0
+        if args:
+            self.closed=True;self.motion.stop()
+            if self.submenu_motion:self.submenu_motion.stop()
 
     def hover(self, page):
         if self.hover_source:GLib.source_remove(self.hover_source)
@@ -573,10 +607,11 @@ class DesktopMenu:
 
     def close_submenu(self):
         if self.submenu:
-            self.submenu.destroy();self.submenu = None
+            self.submenu_motion.destroy();self.submenu_motion=None;self.submenu_left=False;self.submenu = None
         self.page = 'Desktop'
         self.buttons = self.root_buttons[:]
         self.window.resize(200, 1)
+        self.update_input()
 
     def open_submenu(self, page):
         self.close_submenu()
@@ -584,11 +619,16 @@ class DesktopMenu:
         self.submenu.get_style_context().add_class('menu')
         self.submenu.set_size_request(200, -1)
         self.submenu.set_valign(Gtk.Align.END if self.edge == 'bottom' else Gtk.Align.START)
-        # Keep the popup entirely on its output, including near the right edge.
-        left = max(0, min(self.origin_x, self.available_width-404))
-        Layer.set_margin(self.window, Layer.Edge.LEFT, left)
-        self.container.pack_start(self.submenu, False, False, 0)
-        if self.edge == 'right':self.container.reorder_child(self.submenu, 0)
+        # Preserve the root's screen position; flip the cascade toward available
+        # space rather than shifting the clicked menu when its child appears.
+        root_width=self.box.get_preferred_width()[1]
+        root_x=max(0,min(self.origin_x, self.available_width-root_width))
+        self.submenu_left=self.edge=='right' or (self.available_width-root_x-root_width<200 and root_x>=200)
+        self.submenu_motion=self.Motion('right' if self.submenu_left else 'left',max(100,round(self.menu_ms*.8)),self.animate,self.update_input)
+        self.submenu_motion.set_valign(Gtk.Align.END if self.edge=='bottom' else Gtk.Align.START)
+        self.submenu_motion.add(self.submenu)
+        self.container.pack_start(self.submenu_motion, False, False, 0)
+        if self.submenu_left:self.container.reorder_child(self.submenu_motion, 0)
         original = self.box
         self.box = self.submenu
         self.render_page(page)
@@ -601,10 +641,12 @@ class DesktopMenu:
         self.window.destroy()
 
     def show_page(self, page):
-        self.window.set_size_request(min(340,self.available_width) if page == 'Audio' else 200, -1)
+        previous=getattr(self,'page',None)
+        self.window.set_size_request(min(340,self.available_width) if page == 'Audio' else min(256,self.available_width) if page=='Timer' else 200, -1)
         if self.submenu:self.close_submenu()
         self.render_page(page)
         if page == 'Desktop':self.root_buttons = self.buttons[:]
+        if previous!=page and self.motion.get_mapped():self.motion.start()
 
     def render_page(self, page):
         self.page = page
@@ -614,6 +656,13 @@ class DesktopMenu:
         for widget in self.box.get_children():
             widget.destroy()
         self.buttons.clear()
+        if page=='Timer':
+            if 'madway_timer_ui' not in sys.modules:
+                spec=importlib.util.spec_from_file_location('madway_timer_ui',Path(__file__).with_name('madway_timer_ui.py'))
+                module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+            self.timer=sys.modules['madway_timer_ui'].TimerPane(runtime_directory()/'timer.json',send)
+            self.box.pack_start(self.timer,False,False,0);self.buttons=[self.timer.primary,self.timer.reset]
+            self.box.show_all();return
         label = Gtk.Label(label=api['panel_label']() if page == 'Desktop' else page, xalign=0)
         label.get_style_context().add_class('menu-title')
         self.box.pack_start(label, False, False, 0)
@@ -801,6 +850,9 @@ class DesktopMenu:
         key = Gdk.keyval_name(event.keyval)
         if key == 'Escape':
             self.window.destroy();return True
+        self.motion.finish()
+        if self.submenu_motion:self.submenu_motion.finish()
+        if self.page=='Timer':return False
         if isinstance(self.window.get_focus(), Gtk.Range) and key in ('Left', 'Right', 'Up', 'Down', 'Home', 'End'):
             return False
         if isinstance(self.window.get_focus(),Gtk.Calendar) and key in ('Left','Right','Up','Down','Page_Up','Page_Down','Home','End','Return','space'):

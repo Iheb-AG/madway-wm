@@ -141,29 +141,84 @@ animation_ms = 420
 
 ## Window animations
 
-**Animations → Animate maximize / minimize** controls window motion separately.
-Maximize and restore zoom between the old and requested rectangles. Minimize
-shrinks and fades toward the dock's screen edge; restoration reverses it. If
-there is no dock, the target is the bottom center of the window's monitor.
-The duration defaults to 360 ms and accepts 80–500 ms:
+Open **Appearance → Animations** for separate application-opening and maximize/
+restore controls. Presets change draft controls; Apply saves them. Editing an
+individual value marks the selection **Custom**, and switching presets fills
+its values again. Navigation preserves these unsaved edits.
+
+### Application opening
+
+Every new application toplevel uses the opening profile, whether launched from
+the dock, application search, a terminal or another application. Transient dialogs
+also animate. The compositor starts after the first valid scene-buffer commit,
+before presenting that frame. A new window does not have to identify itself as
+Settings to receive the effect. Existing-window activation and layer-shell menus
+retain their own motion. Initial fullscreen windows use a fade-only reveal;
+entering/leaving fullscreen later stays immediate.
+
+| Preset | Opening effect |
+| --- | --- |
+| Soft zoom | Start at 94% with a 10px lift/fade, 320ms gentle easing. |
+| Fade | Keep the final geometry and fade in over 220ms. |
+| Rise | Start 28px below the destination and settle over 340ms. |
+| Slide | Start 32px left of the destination and settle over 320ms. |
+| Spring pop | Start at 86% with a lightly damped spring, 440ms. |
+| Custom | Retain and edit the individual controls. |
+
+**Animate application opening** is independent of maximize/minimize. Customize
+motion (zoom/fade/rise/slide), duration (80–1000ms), easing (Gentle, Responsive,
+Gentle spring or Linear), starting size (50–100%, Zoom only), travel (0–128px)
+and fade-in. Inputs that do not affect the current motion are disabled. A custom
+profile with no fade or displacement appears immediately.
+
+### Maximize and restore
+
+**Animate maximize / minimize** retains its existing enable switch. **Maximize
+preset** offers Smooth zoom, Responsive zoom, Gentle spring, Dissolve, Instant
+and Custom. Maximize and its reverse share the selected style, duration
+(80–1000ms) and easing. Dissolve crossfades between the old and requested
+rectangles; Instant skips maximize/restore motion while allowing minimize motion.
+
+**Minimize / restore (ms)** separately controls shrinking toward the dock edge
+and restoring from it (80–500ms, default 360ms). Without a dock, its target is the
+bottom center of the window's monitor. Choosing a maximize preset does not change
+this duration. Example custom settings:
 
 ```ini
 [windows]
 animate = true
 animation_ms = 360
+open_animate = true
+open_preset = custom
+open_style = zoom
+open_ms = 320
+open_curve = gentle
+open_scale = 94
+open_distance = 10
+open_fade = true
+maximize_preset = custom
+maximize_style = zoom
+maximize_ms = 420
+maximize_curve = spring
 close_animate = true
 close_ms = 240
 ```
 
-These transitions use in-memory snapshots while the application receives its
-new size/state immediately. They settle on clicks, focus changes to another
-window, workspace/layout changes, window closure, lock and sleep. Disabling the
-option makes state changes immediate. Fullscreen state changes stay immediate.
-Reversing an in-progress transition continues from its visible size. Minimize
-preserves the window's aspect ratio and fades near the end of its journey.
-Maximize/restore blends in a newly rendered snapshot at the requested size when
-the client supplies it. If an application has not rendered its requested size by the end of the zoom,
-the compositor displays its latest committed buffer until it updates.
+These transitions use native-scale, alpha-preserving snapshots while applications
+receive their new size/state immediately. Opening can pick up the first committed
+frame at its final size, keeping initially tiled/maximized clients from using
+stale small content throughout the effect. Maximize blends in a frame at its
+requested size when the client supplies one. A slow client still controls when
+its final live content is ready. Captures are size-bounded and failures fall back
+to live rendering; snapshots are freed on completion or cancellation.
+
+Clicks settle to the real surface before input is routed. Focus/layout changes,
+window closure, lock, sleep and output changes also settle/cancel motion. Zoom
+reversals continue from the currently visible rectangle. Changes on one output
+preserve workspace slides on other outputs. Minimize keeps its aspect ratio and
+fades near the end. Existing configurations without opening preferences retain
+their window-animation opt-out; old custom window durations initialize maximize
+timing until a new maximize preset is explicitly chosen.
 
 **Animations → Animate closing windows / Close animation (ms)** adds a subtle
 centered shrink and fade, defaulting to 240 ms. The application closes normally

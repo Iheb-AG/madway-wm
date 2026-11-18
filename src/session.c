@@ -152,6 +152,7 @@ void madway_session_reload(struct madway_server *server)
         if (server->config.window_animation_ms==180) server->config.window_animation_ms=360;
         if (server->config.dock_animation_ms==180) server->config.dock_animation_ms=240;
     }
+    madway_motion_profile_load(&server->config,file);
     char *theme = g_key_file_get_string(file, "appearance", "theme", NULL);
     char *lid = g_key_file_get_string(file,"power","lid_action",NULL);
     server->config.lid_auto = lid != NULL && strcmp(lid,"auto")==0;
